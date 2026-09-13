@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0c0e;
+  --color-ink: #08090a;
+  --color-surface: #121316;
+  --color-elevated: #181a1e;
+  --color-muted: #1e2126;
+  --color-fg: #ece8e1;
+  --color-paper: #ece8e1;
+  --color-fg-muted: #9a958c;
+  --color-fg-subtle: #6b6760;
+  --color-border: #2a2c31;
+  --color-border-strong: #3a3d44;
+  --color-primary: #7d9b96;
+  --color-primary-foreground: #0b0c0e;
+  --color-secondary: #1e2126;
+  --color-secondary-foreground: #ece8e1;
+  --color-ring: #7d9b96;
+  --color-danger: #c45c4a;
+  --color-danger-foreground: #ece8e1;
+  --color-warn: #c4a574;
+  --color-ok: #7d9b96;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --text-2xs: 0.6875rem;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    pointer-events: auto !important;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    pointer-events: auto !important;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+
+  [data-radix-dialog-overlay][data-state="closed"],
+  [data-radix-dialog-content][data-state="closed"] {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  @media print {
+    @page {
+      size: A4;
+      margin: 10mm;
+    }
+    html,
+    body {
+      background: #fff !important;
+      color: #111 !important;
+      overflow: visible !important;
+      height: auto !important;
+      max-width: none !important;
+    }
+    .no-print,
+    [data-sonner-toaster],
+    [data-radix-dialog-overlay],
+    [data-radix-dialog-content] {
+      display: none !important;
+    }
+    .print-root {
+      display: block !important;
+    }
+    .recovery-sheet {
+      max-width: none !important;
+    }
+  }
+
+  @media (max-width: 1023px) {
+    [data-layout="desktop"] {
+      display: none !important;
+      pointer-events: none !important;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    [data-layout="mobile"] {
+      display: none !important;
+      pointer-events: none !important;
+    }
+  }
+
+  header,
+  [role="tablist"],
+  button,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  .android-nav {
+    display: flex;
+    align-items: stretch;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .android-actions > div {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  @media (max-width: 1023px) {
+    [data-sonner-toaster] {
+      bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px)) !important;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
