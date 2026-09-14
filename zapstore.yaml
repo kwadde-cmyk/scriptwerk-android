@@ -1,0 +1,17 @@
+# Zapstore catalog — pubkey must match SIGN_WITH. Do not put nsec here.
+name: Scriptwerk
+summary: Bitcoin-Miniscript-Studio für Android — Core-RPC und eigenes Fulcrum über TLS
+description: |
+  Native Android-App für Miniscript-Wallets gegen eigenen Bitcoin Core
+  und Fulcrum/Electrs (StartOS). Kein öffentlicher Indexer.
+  USB-Hardware-Wallets und Kamera-QR in der App.
+repository: https://github.com/kwadde-cmyk/scriptwerk-android
+website: https://github.com/kwadde-cmyk/scriptwerk-android
+license: MIT
+pubkey: npub1hsrqgwepcd9t3t5q9nm2jjvvz626sk6fjhzyqw3ahfpgrz67034sldsnpz
+icon: public/icon-180.png
+tags:
+  - bitcoin
+  - miniscript
+  - android
+  - self-hosted
