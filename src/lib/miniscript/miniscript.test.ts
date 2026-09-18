@@ -10,7 +10,7 @@ import {
 } from "./compile.ts";
 import { explainPolicy } from "./explain.ts";
 import { decodeLibrary, encodeLibrary, peekChecksum, type SavedPolicy } from "../policy-library.ts";
-import { electrumHostAllowed, indexerHostAllowed, isPublicIndexerHost, nativeIndexerHostAllowed, parseElectrumUrl, scriptPubKeyFromAddress, scripthashForAddress } from "../electrum.ts";
+import { electrumHostAllowed, parseElectrumUrl, scriptPubKeyFromAddress, scripthashForAddress } from "../electrum.ts";
 import {
   applyKeyMaterial,
   attachChildOrReplace,
@@ -47,8 +47,9 @@ import {
 } from "./keys.ts";
 import { visit } from "./ast.ts";
 import { parseAny } from "./parser.ts";
-import { compileStages, delayPresets, describeStageSlots, inferNesting, inferStages, nextStageDelay, permutations, slotsForAccount, sortedMultiAllowed, stageFormula, stageHighlightIds, stageIndicesForAccount, stageKeyOrderVariants } from "./stages.ts";
+import { compileStages, delayPresets, describeStageSlots, inferNesting, inferStages, liftIncompleteReason, nextStageDelay, permutations, slotsForAccount, sortedMultiAllowed, stageFormula, stageHighlightIds, stageIndicesForAccount, stageKeyOrderVariants } from "./stages.ts";
 import { confirmationsAt, coinHeightFromConfirms, evaluateSpendPaths, oldestCoinHeight, youngestCoinHeight } from "./spend-check.ts";
+import { evaluateCoinStatus } from "./coin-status.ts";
 import {
   compileBip388,
   formatBitboxJson,
@@ -61,6 +62,12 @@ import {
   toLedgerPolicy,
   walletPolicyToDescriptor,
 } from "./bip388.ts";
+import {
+  assertImportableText,
+  classifyImportedPolicy,
+  compiledForStudio,
+  descriptorsEquivalent,
+} from "./policy-mode.ts";
 import { defaultAccountPath, formatOrigin, normalizeHwPath, pathToDerivation } from "../hw/types.ts";
 import {
   allRequestedMatch,
@@ -1433,11 +1440,145 @@ describe("electrum helpers", () => {
     assert.equal(electrumHostAllowed("192.168.178.55"), true);
     assert.equal(electrumHostAllowed("8.8.8.8"), false);
     assert.equal(electrumHostAllowed("electrs.local"), true);
-    assert.equal(isPublicIndexerHost("mempool.space"), true);
-    assert.equal(indexerHostAllowed("mempool.space"), false);
-    assert.equal(indexerHostAllowed("fulcrum.local"), true);
-    assert.equal(nativeIndexerHostAllowed("umbrel"), true);
-    assert.equal(nativeIndexerHostAllowed("127.0.0.1"), false);
+  });
+});
+
+describe("imported policy mode", () => {
+  const keys = [emptyKey("A"), emptyKey("B"), emptyKey("C")];
+
+  function classify(src: string) {
+    const parsed = parseAny(src);
+    const stages = inferStages(parsed.node);
+    return classifyImportedPolicy({
+      root: parsed.node,
+      stages,
+      keys,
+      source: src,
+    });
+  }
+
+  it("keeps a classic 2-of-3 plus older recovery in stages mode", () => {
+    const { root } = compileStages(
+      [
+        { id: "s0", delay: 0, k: 2, keys: ["A", "B", "C"] },
+        { id: "s1", delay: 144, k: 1, keys: ["A"] },
+      ],
+      false,
+    );
+    const src = compileMiniscript(root);
+    const hit = classify(src);
+    assert.equal(hit.mode, "stages");
+    assert.equal(hit.stages.length, 2);
+    assert.equal(hit.originalDescriptor, "");
+  });
+
+  it("freezes or_d as display when Scriptwerk would emit or_i", () => {
+    const src = "wsh(or_d(multi(2,A,B,C),and_v(v:pk(A),older(144))))";
+    const hit = classify(src);
+    assert.equal(hit.mode, "display");
+    assert.ok(hit.stages.length >= 1);
+    assert.ok(hit.originalDescriptor.includes("or_d"));
+    assert.equal(descriptorsEquivalent(hit.originalDescriptor, src), true);
+  });
+
+  it("puts after() and sha256 into raw mode", () => {
+    const after = classify("wsh(and_v(v:pk(A),after(800000)))");
+    assert.equal(after.mode, "raw");
+    assert.equal(after.liftWarning, "after");
+    assert.equal(after.stages.length, 0);
+
+    const hash = classify("wsh(and_v(v:pk(A),sha256(00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff)))");
+    assert.equal(hash.mode, "raw");
+    assert.equal(hash.liftWarning, "hashlock");
+    assert.equal(liftIncompleteReason(parseAny("wsh(sha256(aa))").node, "wsh(sha256(aa))"), "hashlock");
+  });
+
+  it("rejects taproot and private material before raw mode", () => {
+    assert.equal(assertImportableText("tr(A)"), "import.err.taproot");
+    assert.equal(assertImportableText("wsh(tr(A))"), "import.err.taproot");
+    assert.equal(assertImportableText("wsh(musig(A,B))"), "import.err.taproot");
+    assert.throws(() => parseAny("tr(A)"), /import.err.taproot/);
+    assert.throws(() => parseAny("wsh(pk(A))#zzzzzzzz"), /import.err.checksum/);
+    assert.equal(
+      assertImportableText("wsh(pk(xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi))"),
+      "import.err.private",
+    );
+  });
+
+  it("serves the frozen original from compiledForStudio", () => {
+    const original = descsumCreate("wsh(and_v(v:pk(A),after(800000)))");
+    const out = compiledForStudio({
+      policyMode: "raw",
+      originalDescriptor: original,
+      root: parseAny(original).node,
+      keys,
+      reuseKeys: false,
+    });
+    assert.ok(out && "ok" in out && out.ok);
+    assert.equal(out.descriptor, original);
+    assert.match(out.miniscript, /after\(800000\)/);
+  });
+});
+
+describe("coin spendability", () => {
+  const twoOfThree = [
+    { id: "s0", delay: 0, k: 2, keys: ["A", "B", "C"] },
+    { id: "s1", delay: 144, k: 1, keys: ["A"] },
+  ];
+
+  it("marks a confirmed 2-of-3 coin spendable now with recovery still locked", () => {
+    const hit = evaluateCoinStatus({ height: 1000, tip: 1000, stages: twoOfThree });
+    assert.equal(hit.confirmations, 1);
+    assert.equal(hit.state, "now");
+    assert.equal(hit.spendable, true);
+    assert.equal(hit.paths[0]?.open, true);
+    assert.equal(hit.paths[1]?.open, false);
+    assert.equal(hit.paths[1]?.blocksLeft, 143);
+  });
+
+  it("opens recovery after older() confirmations", () => {
+    const hit = evaluateCoinStatus({ height: 857, tip: 1000, stages: twoOfThree });
+    assert.equal(hit.confirmations, 144);
+    assert.equal(hit.paths[1]?.open, true);
+    assert.equal(hit.spendable, true);
+  });
+
+  it("keeps a delay-only stage locked until older() elapses", () => {
+    const hit = evaluateCoinStatus({
+      height: 1000,
+      tip: 1000,
+      stages: [{ id: "s0", delay: 144, k: 1, keys: ["A"] }],
+    });
+    assert.equal(hit.state, "later");
+    assert.equal(hit.spendable, false);
+    assert.equal(hit.next?.blocksLeft, 143);
+  });
+
+  it("treats height 0 as unconfirmed", () => {
+    const hit = evaluateCoinStatus({ height: 0, tip: 800000, stages: twoOfThree });
+    assert.equal(hit.state, "unconfirmed");
+    assert.equal(hit.spendable, false);
+  });
+
+  it("uses after() from a raw tree", () => {
+    const { node } = parseAny("wsh(and_v(v:pk(A),after(800000)))");
+    const locked = evaluateCoinStatus({ height: 790000, tip: 790000, root: node, stages: [] });
+    assert.equal(locked.state, "later");
+    assert.equal(locked.next?.kind, "after");
+    assert.equal(locked.next?.blocksLeft, 10000);
+    const open = evaluateCoinStatus({ height: 799000, tip: 800000, root: node, stages: [] });
+    assert.equal(open.state, "now");
+    assert.equal(open.spendable, true);
+  });
+
+  it("never claims a hashlock is spendable", () => {
+    const { node } = parseAny(
+      "wsh(and_v(v:pk(A),sha256(00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff)))",
+    );
+    const hit = evaluateCoinStatus({ height: 100, tip: 200, root: node, stages: [] });
+    assert.equal(hit.unknown, true);
+    assert.equal(hit.spendable, false);
+    assert.equal(hit.state, "unknown");
   });
 });
 

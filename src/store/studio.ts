@@ -22,11 +22,30 @@ import {
 } from "@/lib/miniscript/keys";
 import { buildOperator, wrapNode, type BuildParams } from "@/lib/miniscript/operators";
 import { parseAny } from "@/lib/miniscript/parser";
+import { compileDescriptor } from "@/lib/miniscript/compile";
 import { compileStages, defaultStages, inferNesting, inferStages, isDerivedAlias, type MaxOlder, type Nesting, type Stage } from "@/lib/miniscript/stages";
 import { materializeWalletPolicy, parseScriptwerkBundle, parseWalletPolicy } from "@/lib/miniscript/bip388";
+import {
+  assertImportableText,
+  classifyImportedPolicy,
+  inferReuse,
+  isPolicyMode,
+  policyIsFrozen,
+  sourceFromParse,
+  type PolicyMode,
+} from "@/lib/miniscript/policy-mode";
 import type { PolicySnapshot } from "@/lib/policy-library";
 import { isLocale, localizeMessage, t, type Locale } from "@/lib/i18n";
 import { isAmountUnit, type AmountUnit } from "@/lib/hw/address-check";
+import {
+  asStoredLabels,
+  labelKey,
+  storedFromRecords,
+  mergeLabels,
+  parseBip329,
+  type Bip329Type,
+  type StoredLabel,
+} from "@/lib/bip329";
 
 type Snapshot = {
   keys: KeyEntry[];
@@ -39,6 +58,9 @@ type Snapshot = {
   nesting: Nesting;
   mode: StudioMode;
   maxOlder: MaxOlder;
+  policyMode: PolicyMode;
+  originalDescriptor: string;
+  liftWarning: string;
 };
 
 function snapOf(s: Snapshot): Snapshot {
@@ -53,6 +75,9 @@ function snapOf(s: Snapshot): Snapshot {
     nesting: s.nesting,
     mode: s.mode,
     maxOlder: s.maxOlder,
+    policyMode: s.policyMode,
+    originalDescriptor: s.originalDescriptor,
+    liftWarning: s.liftWarning,
   };
 }
 
@@ -90,9 +115,13 @@ interface StudioState {
   nesting: Nesting;
   mode: StudioMode;
   maxOlder: MaxOlder;
+  policyMode: PolicyMode;
+  originalDescriptor: string;
+  liftWarning: string;
   locale: Locale;
   amountUnit: AmountUnit;
   policyName: string;
+  labels: Record<string, StoredLabel>;
   importError: string | null;
   past: Snapshot[];
   future: Snapshot[];
@@ -103,6 +132,8 @@ interface StudioState {
   setLocale: (locale: Locale) => void;
   setAmountUnit: (unit: AmountUnit) => void;
   setPolicyName: (name: string) => void;
+  setLabel: (type: Bip329Type, ref: string, label: string) => void;
+  importBip329: (text: string) => { ok: true; n: number } | { ok: false; error: string };
   loadSnapshot: (snap: PolicySnapshot) => void;
   select: (id: string | null) => void;
   selectStage: (id: string | null) => void;
@@ -124,6 +155,7 @@ interface StudioState {
   importKeysText: (text: string) => void;
   importKeyText: (id: string, text: string) => string | null;
   importChildText: (id: string, text: string, opts?: { fallbackPath?: string; alias?: string }) => string | null;
+  rebuildAsStages: () => void;
   reset: () => void;
 }
 
@@ -146,6 +178,32 @@ function adoptImportedTree(node: MsNode, keys: KeyEntry[], opts?: { preserveGrou
     keys: labeled.keys,
     stages: labeled.stages,
     importError: null as string | null,
+  };
+}
+
+function finishImportedPolicy(
+  node: MsNode,
+  keys: KeyEntry[],
+  source: string,
+  opts?: { preserveGroups?: boolean; reuseKeys?: boolean },
+) {
+  const adopted = adoptImportedTree(node, keys, { preserveGroups: opts?.preserveGroups });
+  const classified = classifyImportedPolicy({
+    root: adopted.root,
+    stages: adopted.stages,
+    keys: adopted.keys,
+    source,
+    reuseKeys: opts?.reuseKeys,
+  });
+  return {
+    ...adopted,
+    stages: classified.mode === "raw" ? [] : classified.stages,
+    policyMode: classified.mode,
+    originalDescriptor: classified.originalDescriptor,
+    liftWarning: classified.liftWarning ?? "",
+    reuseKeys: classified.reuseKeys,
+    nesting: classified.nesting,
+    selectedStageId: null as string | null,
   };
 }
 
@@ -303,14 +361,20 @@ export const useStudio = create<StudioState>()(
       nesting: "late",
       mode: "easy",
       maxOlder: 65534,
+      policyMode: "stages",
+      originalDescriptor: "",
+      liftWarning: "",
       locale: "de",
       amountUnit: "auto",
       policyName: "Scriptwerk",
+      labels: {},
       importError: null,
       past: [],
       future: [],
       setReuseKeys: (reuseKeys) => {
-        const { stages, keys, nesting, network } = get();
+        const cur = get();
+        if (policyIsFrozen(cur.policyMode)) return;
+        const { stages, keys, nesting, network } = cur;
         if (stages.length) {
           mutate({ reuseKeys, ...applyStageTree(stages, keys, network, reuseKeys, nesting) });
           return;
@@ -318,7 +382,9 @@ export const useStudio = create<StudioState>()(
         mutate({ reuseKeys });
       },
       setNesting: (nesting) => {
-        const { stages, keys, network, reuseKeys } = get();
+        const cur = get();
+        if (policyIsFrozen(cur.policyMode)) return;
+        const { stages, keys, network, reuseKeys } = cur;
         if (stages.length) {
           mutate(applyStageTree(stages, keys, network, reuseKeys, nesting));
           return;
@@ -330,7 +396,12 @@ export const useStudio = create<StudioState>()(
           mutate({ mode });
           return;
         }
-        const { stages, keys, network } = get();
+        const cur = get();
+        if (policyIsFrozen(cur.policyMode)) {
+          mutate({ mode: "easy", reuseKeys: cur.reuseKeys, nesting: cur.nesting, maxOlder: cur.maxOlder });
+          return;
+        }
+        const { stages, keys, network } = cur;
         if (stages.length) {
           mutate({
             mode: "easy",
@@ -344,7 +415,9 @@ export const useStudio = create<StudioState>()(
       },
       setMaxOlder: (n) => {
         const maxOlder = n === 65535 ? 65535 : 65534;
-        const { stages, keys, network, reuseKeys, nesting } = get();
+        const cur = get();
+        if (policyIsFrozen(cur.policyMode)) return;
+        const { stages, keys, network, reuseKeys, nesting } = cur;
         const next = stages.map((s) => ({ ...s, delay: Math.min(s.delay, maxOlder) }));
         if (stages.length) {
           mutate({ maxOlder, ...applyStageTree(next, keys, network, reuseKeys, nesting) });
@@ -355,17 +428,40 @@ export const useStudio = create<StudioState>()(
       setLocale: (locale) => set({ locale: isLocale(locale) ? locale : "de" }),
       setAmountUnit: (unit) => set({ amountUnit: isAmountUnit(unit) ? unit : "auto" }),
       setPolicyName: (name) => set({ policyName: name.slice(0, 80) }),
+      setLabel: (type, ref, label) => {
+        const key = labelKey(type, ref);
+        const labels = { ...get().labels };
+        const trimmed = label.trim();
+        if (!trimmed) {
+          delete labels[key];
+        } else {
+          labels[key] = { type, ref: key.slice(type.length + 1), label: trimmed };
+        }
+        set({ labels });
+      },
+      importBip329: (text) => {
+        const parsed = parseBip329(text);
+        const incoming = storedFromRecords(parsed.records);
+        const n = Object.keys(incoming).length;
+        if (!n) return { ok: false as const, error: "wallet.bip329Empty" };
+        set({ labels: mergeLabels(get().labels, incoming) });
+        return { ok: true as const, n };
+      },
       loadSnapshot: (snap) => {
+        const policyMode = isPolicyMode(snap.policyMode) ? snap.policyMode : "stages";
         mutate({
           keys: (snap.keys ?? []).map(normalizeKeyEntry),
           root: snap.root,
-          stages: snap.stages ?? [],
+          stages: policyMode === "raw" ? [] : (snap.stages ?? []),
           network: "mainnet",
           reuseKeys: Boolean(snap.reuseKeys),
           nesting: snap.nesting === "early" ? "early" : "late",
           mode: snap.mode === "expert" ? "expert" : "easy",
           maxOlder: snap.maxOlder === 65535 ? 65535 : 65534,
           policyName: (snap.policyName || get().policyName || "Scriptwerk").slice(0, 80),
+          policyMode,
+          originalDescriptor: policyIsFrozen(policyMode) ? (snap.originalDescriptor ?? "") : "",
+          liftWarning: policyIsFrozen(policyMode) ? (snap.liftWarning ?? "") : "",
           selectedId: snap.root?.id ?? null,
           selectedStageId: null,
           importError: null,
@@ -399,17 +495,25 @@ export const useStudio = create<StudioState>()(
           importError: null,
         });
       },
-      setRoot: (root) => mutate({ root, selectedId: root?.id ?? null }),
+      setRoot: (root) => {
+        if (policyIsFrozen(get().policyMode)) return;
+        mutate({ root, selectedId: root?.id ?? null });
+      },
       setStages: (stages) => {
         const cur = get();
+        if (policyIsFrozen(cur.policyMode)) return;
         const next = applyStageTree(stages, cur.keys, cur.network, cur.reuseKeys, cur.nesting);
         mutate({
           ...next,
           selectedId: cur.selectedStageId ? null : (next.root?.id ?? null),
           selectedStageId: cur.selectedStageId,
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
         });
       },
       applyOperator: (opId, params) => {
+        if (policyIsFrozen(get().policyMode)) return;
         const node = buildOperator(opId, params);
         const { root, selectedId } = get();
         mutate({
@@ -417,10 +521,14 @@ export const useStudio = create<StudioState>()(
           selectedId: node.id,
           importError: null,
           stages: [],
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
         });
       },
       wrapSelected: (wrap) => {
-        const { root, selectedId } = get();
+        const { root, selectedId, policyMode } = get();
+        if (policyIsFrozen(policyMode)) return;
         if (!root || !selectedId) return;
         const target = findNode(root, selectedId);
         if (!target) return;
@@ -429,10 +537,14 @@ export const useStudio = create<StudioState>()(
           root: mapNode(root, selectedId, () => wrapped),
           selectedId: wrapped.id,
           stages: [],
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
         });
       },
       unwrapSelected: () => {
-        const { root, selectedId } = get();
+        const { root, selectedId, policyMode } = get();
+        if (policyIsFrozen(policyMode)) return;
         if (!root || !selectedId) return;
         const target = findNode(root, selectedId);
         if (!target) return;
@@ -441,16 +553,33 @@ export const useStudio = create<StudioState>()(
             root: mapNode(root, selectedId, () => target.child),
             selectedId: target.child.id,
             stages: [],
+            policyMode: "stages",
+            originalDescriptor: "",
+            liftWarning: "",
           });
           return;
         }
-        mutate({ root: unwrapOneAround(root, selectedId), stages: [] });
+        mutate({
+          root: unwrapOneAround(root, selectedId),
+          stages: [],
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
+        });
       },
       deleteSelected: () => {
-        const { root, selectedId } = get();
+        const { root, selectedId, policyMode } = get();
+        if (policyIsFrozen(policyMode)) return;
         if (!root || !selectedId) return;
         if (root.id === selectedId) {
-          mutate({ root: null, selectedId: null, stages: [] });
+          mutate({
+            root: null,
+            selectedId: null,
+            stages: [],
+            policyMode: "stages",
+            originalDescriptor: "",
+            liftWarning: "",
+          });
           return;
         }
         const nextHole = hole();
@@ -458,14 +587,20 @@ export const useStudio = create<StudioState>()(
           root: mapNode(root, selectedId, () => nextHole),
           selectedId: nextHole.id,
           stages: [],
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
         });
       },
       patchNode: (id, patch) => {
-        const { root } = get();
-        if (!root) return;
+        const { root, policyMode } = get();
+        if (policyIsFrozen(policyMode) || !root) return;
         mutate({
           root: mapNode(root, id, (n) => ({ ...n, ...patch }) as MsNode),
           stages: [],
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
         });
       },
       addKey: () => {
@@ -476,10 +611,10 @@ export const useStudio = create<StudioState>()(
         mutate({ keys: get().keys.map((k) => (k.id === id ? { ...k, ...patch } : k)) });
       },
       removeKey: (id) => {
-        const { keys, stages, reuseKeys, nesting } = get();
+        const { keys, stages, reuseKeys, nesting, policyMode } = get();
         const removed = keys.find((k) => k.id === id);
         const nextKeys = keys.filter((k) => k.id !== id);
-        if (!removed || !stages.length) {
+        if (!removed || !stages.length || policyIsFrozen(policyMode)) {
           mutate({ keys: nextKeys });
           return;
         }
@@ -518,10 +653,19 @@ export const useStudio = create<StudioState>()(
         });
       },
       importText: (text) => {
+        const blocked = assertImportableText(text);
+        if (blocked) {
+          set({ importError: t(get().locale, blocked) });
+          return;
+        }
+        const fail = (e: unknown) => {
+          const msg = e instanceof Error ? e.message : "import.fail";
+          set({ importError: localizeMessage(get().locale, msg) || t(get().locale, "import.fail") });
+        };
         const bundle = parseScriptwerkBundle(text);
         if (bundle) {
           try {
-            const src = bundle.miniscript || bundle.descriptor;
+            const src = bundle.descriptor || bundle.miniscript;
             const parsed = parseAny(src);
             const extracted = extractKeysFromTree(parsed.node, flattenKeysForLookup(bundle.keys));
             const byXpub = new Map(
@@ -546,15 +690,26 @@ export const useStudio = create<StudioState>()(
               }),
               bundle.keys,
             );
-            const adopted = adoptImportedTree(extracted.node, keys, { preserveGroups: true });
-            mutate({
-              ...adopted,
-              ...(bundle.reuseKeys != null ? { reuseKeys: bundle.reuseKeys } : {}),
-            });
+            if (isPolicyMode(bundle.policyMode) && policyIsFrozen(bundle.policyMode)) {
+              const adopted = adoptImportedTree(extracted.node, keys, { preserveGroups: true });
+              mutate({
+                ...adopted,
+                stages: bundle.policyMode === "raw" ? [] : adopted.stages,
+                policyMode: bundle.policyMode,
+                originalDescriptor: bundle.originalDescriptor || sourceFromParse(parsed),
+                liftWarning: bundle.liftWarning || "",
+                reuseKeys: bundle.reuseKeys ?? get().reuseKeys,
+              });
+              return;
+            }
+            mutate(
+              finishImportedPolicy(extracted.node, keys, bundle.descriptor || sourceFromParse(parsed), {
+                preserveGroups: true,
+                reuseKeys: bundle.reuseKeys,
+              }),
+            );
           } catch (e) {
-            set({
-              importError: e instanceof Error ? e.message : t(get().locale, "import.fail"),
-            });
+            fail(e);
           }
           return;
         }
@@ -563,11 +718,19 @@ export const useStudio = create<StudioState>()(
         if (wallet) {
           try {
             const extracted = materializeWalletPolicy(wallet, [...get().keys, ...peeled.keys]);
-            mutate(adoptImportedTree(extracted.node, applyKeyNames(extracted.keys, peeled.keys)));
+            const keys = applyKeyNames(extracted.keys, peeled.keys);
+            const reuse = inferReuse(inferStages(extracted.node));
+            const compiled = compileDescriptor(extracted.node, keys, reuse);
+            mutate(
+              finishImportedPolicy(
+                extracted.node,
+                keys,
+                compiled.ok ? compiled.descriptor : peeled.body,
+                { reuseKeys: reuse },
+              ),
+            );
           } catch (e) {
-            set({
-              importError: e instanceof Error ? e.message : t(get().locale, "import.fail"),
-            });
+            fail(e);
           }
           return;
         }
@@ -579,11 +742,15 @@ export const useStudio = create<StudioState>()(
         try {
           const parsed = parseAny(peeled.body);
           const extracted = extractKeysFromTree(parsed.node, [...get().keys, ...peeled.keys]);
-          mutate(adoptImportedTree(extracted.node, applyKeyNames(extracted.keys, peeled.keys)));
+          mutate(
+            finishImportedPolicy(
+              extracted.node,
+              applyKeyNames(extracted.keys, peeled.keys),
+              sourceFromParse(parsed),
+            ),
+          );
         } catch (e) {
-          set({
-            importError: e instanceof Error ? e.message : t(get().locale, "import.fail"),
-          });
+          fail(e);
         }
       },
       importKeysText: (text) => {
@@ -699,7 +866,25 @@ export const useStudio = create<StudioState>()(
         });
         return null;
       },
-      reset: () => mutate(applyStageTree(defaultStages(), [], get().network, get().reuseKeys, get().nesting)),
+      reset: () =>
+        mutate({
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
+          ...applyStageTree(defaultStages(), [], get().network, get().reuseKeys, get().nesting),
+        }),
+      rebuildAsStages: () => {
+        const cur = get();
+        if (!policyIsFrozen(cur.policyMode)) return;
+        const stages = cur.stages.length ? cur.stages : inferStages(cur.root);
+        const next = stages.length ? stages : defaultStages();
+        mutate({
+          policyMode: "stages",
+          originalDescriptor: "",
+          liftWarning: "",
+          ...applyStageTree(next, cur.keys, cur.network, cur.reuseKeys, cur.nesting),
+        });
+      },
     };
     },
     {
@@ -724,6 +909,10 @@ export const useStudio = create<StudioState>()(
         locale: s.locale,
         amountUnit: s.amountUnit,
         policyName: s.policyName,
+        labels: s.labels,
+        policyMode: s.policyMode,
+        originalDescriptor: s.originalDescriptor,
+        liftWarning: s.liftWarning,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<StudioState>;
@@ -735,7 +924,16 @@ export const useStudio = create<StudioState>()(
           next.maxOlder = next.stages.some((st) => st.delay >= 65535) ? 65535 : 65534;
         }
         if (!next.policyName) next.policyName = "Scriptwerk";
+        next.labels = asStoredLabels(next.labels);
         if (!isAmountUnit(next.amountUnit)) next.amountUnit = "auto";
+        next.policyMode = isPolicyMode(next.policyMode) ? next.policyMode : "stages";
+        if (!policyIsFrozen(next.policyMode)) {
+          next.originalDescriptor = "";
+          next.liftWarning = "";
+        } else {
+          next.originalDescriptor = next.originalDescriptor ?? "";
+          next.liftWarning = next.liftWarning ?? "";
+        }
         next.network = "mainnet";
         return next;
       },

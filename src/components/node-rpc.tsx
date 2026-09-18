@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { compileDescriptorCached } from "@/lib/miniscript/compile";
+import { compiledForStudio } from "@/lib/miniscript/policy-mode";
 import { checksumOf } from "@/lib/miniscript/checksum";
 import { bookmarkletHref, bridgeScript, openNodeTab, originOf, watchBridge } from "@/lib/bitcoind/bridge";
-import { skipNodeBridge } from "@/lib/bitcoind/native-http";
 import { useBitcoind } from "@/store/bitcoind";
 import type { DiagStatus } from "@/lib/bitcoind/diagnose";
 import { useStudio } from "@/store/studio";
@@ -59,14 +58,13 @@ function useKeepBridge() {
   const nodeUrl = normalizeRpcUrl(url, network);
 
   useEffect(() => {
-    if (skipNodeBridge()) return;
     return watchBridge(originOf(nodeUrl), { user: username, pass: password }, () => {
       void (async () => {
         await finishBridge();
         const st = useBitcoind.getState();
         if (st.status !== "ready") return;
         const s = useStudio.getState();
-        const compiled = compileDescriptorCached(s.root, s.keys, s.reuseKeys);
+        const compiled = compiledForStudio(s);
         if (compiled?.ok && compiled.descriptor.includes("xpub")) {
           await st.validate(compiled.descriptor, s.network);
         }
@@ -95,9 +93,6 @@ function NodeDialogBody() {
   const disconnect = useBitcoind((s) => s.disconnect);
   const validate = useBitcoind((s) => s.validate);
   const bridge = useBitcoind((s) => s.bridge);
-  const root = useStudio((s) => s.root);
-  const keys = useStudio((s) => s.keys);
-  const reuseKeys = useStudio((s) => s.reuseKeys);
   const network = useStudio((s) => s.network);
   const [busy, setBusy] = useState(false);
   const [proxyOn, setProxyOn] = useState(false);
@@ -110,14 +105,13 @@ function NodeDialogBody() {
   const [electrumSource, setElectrumSource] = useState("");
   const passRef = useRef<HTMLInputElement>(null);
 
-  const compiled = compileDescriptorCached(root, keys, reuseKeys);
+  const compiled = useStudio(compiledForStudio);
   const ready = status === "ready";
   const errText = error ? localizeMessage(locale, error) : null;
   const port = defaultRpcPort(network);
   const startos = kind === "startos" || looksLikeStartos(url);
   const ipWarn = startos && isLanIpUrl(url);
   const nodeUrl = normalizeRpcUrl(url, network);
-  const phone = skipNodeBridge();
 
   useEffect(() => {
     void hostProxyAvailable().then(setProxyOn);
@@ -161,7 +155,7 @@ function NodeDialogBody() {
     <DialogContent className="max-h-[min(720px,calc(100dvh-2rem))] w-[min(520px,calc(100vw-1.5rem))] overflow-y-auto">
       <DialogHeader>
         <DialogTitle>{t("node.title")}</DialogTitle>
-        <DialogDescription>{phone ? t("node.blurbPhone") : t("node.blurb")}</DialogDescription>
+        <DialogDescription>{t("node.blurb")}</DialogDescription>
       </DialogHeader>
 
       {canLock ? (
@@ -300,13 +294,7 @@ function NodeDialogBody() {
           </div>
         </div>
         <p className="text-2xs text-pretty text-fg-muted">
-          {phone
-            ? t("node.phoneHelp")
-            : proxyOn && canLock
-              ? t("node.startos.help")
-              : startos
-                ? t("node.startos.rpcUser")
-                : t("node.lanHelp")}
+          {proxyOn && canLock ? t("node.startos.help") : startos ? t("node.startos.rpcUser") : t("node.lanHelp")}
         </p>
         <div>
           <Label htmlFor="node-electrum">{t("node.electrum")}</Label>
@@ -316,15 +304,13 @@ function NodeDialogBody() {
             value={electrum}
             disabled={authLocked && Boolean(electrumPreset)}
             onChange={(e) => patch({ electrum: e.target.value })}
-            placeholder="192.168.1.20:50001"
+            placeholder="host.local:50001"
             className="mt-1.5 font-mono text-xs"
           />
           <p className="mt-1 text-2xs text-pretty text-fg-muted">
             {electrumPreset
               ? t("node.electrumStartos", { name: electrumSource === "electrs" ? "Electrs" : "Fulcrum" })
-              : phone
-                ? t("node.electrumHintPhone")
-                : t("node.electrumHint")}
+              : t("node.electrumHint")}
           </p>
         </div>
         {ipWarn ? <p className="text-2xs text-pretty text-warn">{t("node.startos.ipWarn")}</p> : null}
@@ -379,16 +365,16 @@ function NodeDialogBody() {
             {probe.blocks ? ` · ${probe.blocks} Bl.` : ""}
           </p>
         ) : null}
-        {errText ? <p className="text-xs text-danger">{errText}</p> : null}
+        {errText && !trace ? <p className="text-xs text-danger">{errText}</p> : null}
         {error && /node\.err\.auth|\b401\b/.test(error) ? (
-          <p className="text-2xs text-pretty text-warn">{t(phone ? "node.err.authHintPhone" : "node.err.authHint")}</p>
+          <p className="text-2xs text-pretty text-warn">{t("node.err.authHint")}</p>
         ) : null}
-        {!phone && (error === "node.err.blocked" || error === "node.err.cors" || (status !== "ready" && trace?.steps.some((s) => s.status === "fail"))) ? (
+        {error === "node.err.blocked" || error === "node.err.cors" || (status !== "ready" && trace?.steps.some((s) => s.status === "fail")) ? (
           <Button type="button" variant="outline" size="sm" onClick={() => openNodeTab(nodeUrl)}>
             {t("node.openCert")}
           </Button>
         ) : null}
-        {!phone && (bridge === "needed" || bridge === "on") ? <BridgePanel nodeUrl={nodeUrl} /> : null}
+        {bridge === "needed" || bridge === "on" ? <BridgePanel nodeUrl={nodeUrl} /> : null}
         {trace ? <TracePanel /> : null}
         {lastCheck ? <CheckResult /> : null}
       </form>
@@ -406,10 +392,7 @@ export function NodeCheckCard() {
   const setOpen = useBitcoind((s) => s.setOpen);
   const demo = useBitcoind((s) => s.demo);
   const network = useStudio((s) => s.network);
-  const root = useStudio((s) => s.root);
-  const keys = useStudio((s) => s.keys);
-  const reuseKeys = useStudio((s) => s.reuseKeys);
-  const compiled = compileDescriptorCached(root, keys, reuseKeys);
+  const compiled = useStudio(compiledForStudio);
   const ready = status === "ready";
 
   function runCheck() {
@@ -459,7 +442,7 @@ function NodeLoading({ busy }: { busy: boolean }) {
   const bridge = useBitcoind((s) => s.bridge);
   let label: string | null = null;
   if (checking) label = t("node.loading.check");
-  else if (status === "connecting") label = t("node.loading.connect");
+  else if (status === "connecting" || busy) label = t("node.loading.connect");
   else if (bridge === "needed") label = t("node.loading.bridge");
   if (!label) return null;
   return (
@@ -569,13 +552,13 @@ function stepDot(status: DiagStatus): string {
 }
 
 function TracePanel() {
-  const { t, locale } = useT();
+  const { t } = useT();
   const trace = useBitcoind((s) => s.trace);
   const status = useBitcoind((s) => s.status);
   if (!trace) return null;
   const connected = status === "ready" && trace.ok;
   const steps = connected
-    ? trace.steps.filter((s) => s.id === "url" || s.id === "auth" || s.id === "http" || s.id === "rpc" || s.id === "bridge" || s.id === "electrum")
+    ? trace.steps.filter((s) => s.id === "url" || s.id === "auth" || s.id === "rpc" || s.id === "bridge")
     : trace.steps;
   return (
     <div className="rounded-lg border border-border bg-surface px-3 py-2">
@@ -596,7 +579,7 @@ function TracePanel() {
             <span className="min-w-0">
               <span className="text-fg">{t(`node.diag.${step.id}`)}</span>
               <span className="mt-0.5 block min-w-0">
-                <ClipText value={localizeMessage(locale, step.detail)} className="text-2xs text-fg-muted" />
+                <ClipText value={step.detail} className="text-2xs text-fg-muted" />
               </span>
             </span>
           </li>
@@ -657,7 +640,7 @@ function CheckResult({ bare = false }: { bare?: boolean }) {
       ) : null}
       <UtxoScanPanel
         enabled={utxoOn}
-        hint={utxoOn ? t(skipNodeBridge() ? "hw.utxo.blurbPhone" : "hw.utxo.blurb") : t("hw.utxo.needCheck")}
+        hint={utxoOn ? t("hw.utxo.blurb") : t("hw.utxo.needCheck")}
       />
     </>
   );
@@ -671,10 +654,7 @@ export function NodeAutoSync() {
   const demo = useBitcoind((s) => s.demo);
   const checking = useBitcoind((s) => s.checking);
   const scanningWatch = useBitcoind((s) => s.scanningWatch);
-  const root = useStudio((s) => s.root);
-  const keys = useStudio((s) => s.keys);
-  const reuseKeys = useStudio((s) => s.reuseKeys);
-  const compiled = compileDescriptorCached(root, keys, reuseKeys);
+  const compiled = useStudio(compiledForStudio);
   const cs = compiled?.ok ? checksumOf(compiled.descriptor) : "";
   const desc = compiled?.ok ? compiled.descriptor : "";
   const last = useRef("");

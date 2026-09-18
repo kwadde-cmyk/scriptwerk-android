@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { compileDescriptorCached } from "@/lib/miniscript/compile";
+import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import {
   displayKeyToken,
   formatFingerprint,
@@ -97,16 +97,13 @@ export function RecoveryPrintRoot() {
 function RecoveryDocument({ print = false }: { print?: boolean }) {
   const { t, locale } = useT();
   const policyName = useStudio((s) => s.policyName);
-  const root = useStudio((s) => s.root);
   const keys = useStudio((s) => s.keys);
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const nodeStatus = useBitcoind((s) => s.status);
   const lastCheck = useBitcoind((s) => s.lastCheck);
-  const compiled = useMemo(
-    () => compileDescriptorCached(root, keys, reuseKeys),
-    [root, keys, reuseKeys],
-  );
+  const compiled = useStudio(compiledForStudio);
   const descriptor = compiled?.ok ? compiled.descriptor : "";
   const checksum = peekChecksum(descriptor);
   const slots = useMemo(() => describeStageSlots(stages, reuseKeys), [stages, reuseKeys]);
@@ -169,6 +166,7 @@ function RecoveryDocument({ print = false }: { print?: boolean }) {
         ) : null}
       </header>
 
+      {!frozen && slots.length ? (
       <section className="mt-4">
         <h3 className="text-[10px] font-semibold tracking-wide uppercase">{t("recovery.stages")}</h3>
         <ol className="mt-1 list-decimal space-y-1 pl-5">
@@ -192,6 +190,7 @@ function RecoveryDocument({ print = false }: { print?: boolean }) {
           })}
         </ol>
       </section>
+      ) : null}
 
       <section className="mt-4">
         <h3 className="text-[10px] font-semibold tracking-wide uppercase">{t("recovery.keys")}</h3>

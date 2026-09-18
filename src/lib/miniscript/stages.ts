@@ -509,6 +509,60 @@ export function inferStages(root: MsNode | null): Stage[] {
   return [...merged.values()].sort((a, b) => a.delay - b.delay);
 }
 
+const HASHLOCK_RE = /\b(sha256|hash160|hash256|ripemd160)\s*\(/i;
+
+function threshHasNonKeyChild(n: MsNode): boolean {
+  if (n.kind !== "thresh") return false;
+  return n.children.some((c) => {
+    let cur = c;
+    while (cur.kind === "wrap") cur = cur.child;
+    return cur.kind !== "pk" && cur.kind !== "pkh";
+  });
+}
+
+/** Why this tree cannot be the Scriptwerk stage model. Null = lift may proceed. */
+export function liftIncompleteReason(root: MsNode | null, source = ""): string | null {
+  const src = source.replace(/\s+/g, "");
+  if (HASHLOCK_RE.test(src)) return "hashlock";
+  if (/\braw\(/i.test(src)) return "raw";
+  if (/\baddr\(/i.test(src)) return "addr";
+  if (/\bcombo\(/i.test(src)) return "combo";
+  if (!root || root.kind === "hole") return src ? "empty" : "empty";
+
+  let after = false;
+  let unknown = "";
+  let thresh = false;
+  visit(root, (n) => {
+    if (n.kind === "after") after = true;
+    if (n.kind === "unknown") unknown = n.name || "unknown";
+    if (threshHasNonKeyChild(n)) thresh = true;
+  });
+  if (unknown) {
+    const n = unknown.toLowerCase();
+    if (n === "sha256" || n === "hash160" || n === "hash256" || n === "ripemd160") return "hashlock";
+    if (n === "raw") return "raw";
+    if (n === "addr") return "addr";
+    if (n === "combo") return "combo";
+    return n;
+  }
+  if (after) return "after";
+  if (thresh) return "thresh";
+
+  const branches = splitDisjuncts(root);
+  let shaped = 0;
+  for (const branch of branches) {
+    const { body } = peelLock(branch);
+    if (shapeOf(body)) {
+      shaped += 1;
+      continue;
+    }
+    if (body.kind !== "hole") return "shape";
+  }
+  if (!shaped) return "empty";
+  if (shaped < branches.length) return "shape";
+  return null;
+}
+
 export function stageHighlightIds(
   root: MsNode | null,
   stages: Stage[],

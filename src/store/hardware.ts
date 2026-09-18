@@ -11,7 +11,6 @@ import {
   type HwSession,
   type HwXpub,
 } from "@/lib/hw";
-import { installNativeUsbPolyfill } from "@/lib/hw/native-usb";
 import { useStudio } from "@/store/studio";
 
 export type HwStatus = "idle" | "picking" | "connecting" | "pairing" | "ready" | "busy" | "error";
@@ -61,7 +60,7 @@ export const useHardware = create<HardwareState>((set, get) => ({
   pairingCode: null,
   error: null,
   pendingKeyId: null,
-  hid: detectHid(),
+  hid: "missing",
   lastHmac: null,
   policyHmacKey: null,
   session: null,
@@ -72,46 +71,8 @@ export const useHardware = create<HardwareState>((set, get) => ({
   setPendingKey: (id) => set({ pendingKeyId: id }),
 
   connect: async (kind, demo = false) => {
-    await installNativeUsbPolyfill();
     const prev = get().session;
     if (prev) await prev.close().catch(() => undefined);
-    const access = refreshHid();
-    if (!demo && access === "iframe") {
-      set({
-        status: "error",
-        kind,
-        demo: false,
-        error: "hw.err.iframe",
-        hid: access,
-        session: null,
-        pairingCode: null,
-      });
-      throw new Error("hw.err.iframe");
-    }
-    if (!demo && kind === "bitbox" && access !== "ok") {
-      set({
-        status: "error",
-        kind,
-        demo: false,
-        error: "hw.err.bitboxHid",
-        hid: access,
-        session: null,
-        pairingCode: null,
-      });
-      throw new Error("hw.err.bitboxHid");
-    }
-    if (!demo && kind === "ledger" && access !== "ok" && access !== "usb") {
-      set({
-        status: "error",
-        kind,
-        demo: false,
-        error: "hw.err.usb",
-        hid: access,
-        session: null,
-        pairingCode: null,
-      });
-      throw new Error("hw.err.usb");
-    }
     set({
       status: demo ? "connecting" : "picking",
       kind,
@@ -119,7 +80,7 @@ export const useHardware = create<HardwareState>((set, get) => ({
       error: null,
       pairingCode: null,
       session: null,
-      hid: access,
+      hid: refreshHid(),
     });
     try {
       const session = demo

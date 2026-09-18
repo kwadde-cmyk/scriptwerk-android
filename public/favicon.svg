@@ -1,11 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#0B0C0E"/>
-  <rect x="3" y="3" width="58" height="58" rx="12" fill="none" stroke="#7D9B96" stroke-width="2.5"/>
-  <path
-    d="M44 19c0-5.8-5.6-9-12-9s-12 3.6-12 9c0 5.4 4.4 7.8 12 10.8S44 37 44 43.2c0 5.8-5.6 9-12 9s-12-3.6-12-9"
-    fill="none"
-    stroke="#ECE8E1"
-    stroke-width="7.5"
-    stroke-linecap="round"
-  />
+  <text x="32" y="50" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="52" font-weight="700" fill="#3d5c56">S</text>
+  <text x="32" y="49" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="50" font-weight="700" fill="#7d9b96">S</text>
+  <text x="32" y="48" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="48" font-weight="700" fill="#ece8e1">S</text>
 </svg>

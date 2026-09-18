@@ -1,29 +1,28 @@
 # Scriptwerk Android APK
 
-Sideload debug APK: `artifacts/Scriptwerk.apk` (package `app.scriptwerk.android`).
+Sideloadbare Debug-APK: `artifacts/Scriptwerk.apk` (Paket `app.scriptwerk.android`).
 
-## Install
+## Installieren
 
-1. Copy the APK to the phone.
-2. Settings → Security → allow **Install unknown apps** for the file manager/browser.
-3. Open the APK. Play Protect may warn — debug signature, not Play Store.
+1. Datei aufs Telefon kopieren.
+2. Einstellungen → Sicherheit → **Unbekannte Apps installieren** für den verwendeten Dateimanager/Browser erlauben.
+3. APK antippen. Play Protect kann warnen — das ist eine Debug-Signatur, kein Play-Store-Build.
 
-## Camera
+## Kamera
 
-The APK has `CAMERA`. First scan asks for permission. Live QR and **Foto** use the device camera.
+Die APK hat `CAMERA`. Beim ersten Scan fragt Android nach der Kamera. Live-QR und der Button **Foto** nutzen die Gerätekamera.
 
-## USB / hardware wallets
+## USB / Hardware-Wallets
 
-Ledger and BitBox02 over USB-OTG. Plug in, allow USB access. Ledger: Bitcoin app open, Ledger Live closed. BitBox: unlocked.
+Die APK spricht Ledger und BitBox02 **nativ** über USB-Host. Gerät einstecken, USB-Zugriff erlauben. Ledger: Bitcoin-App offen, Ledger Live zu. BitBox: entsperren.
 
-## Bitcoin Core (no node-tab bridge)
+## Bitcoin Core (kein Node-Tab)
 
-The app talks to Core over HTTP from the phone. Enter the LAN / `.local` URL from StartOS Interfaces, not `127.0.0.1`. Example: `https://capable-dosage.local:8332` (port from Interfaces).
+Die App spricht Core **direkt** über HTTP — ohne Brücke, ohne Lesezeichen. LAN-IP eintragen (nicht 127.0.0.1), z. B. `http://192.168.1.20:8332`.
 
-## Fulcrum / Electrs
+## Indexer (Fulcrum / Electrs)
 
-UTXOs do **not** come from mempool.space. In the node dialog paste the **Electrum (SSL)** address from StartOS, e.g. `ssl://capable-dosage.local:64718`. Keep `ssl://` and that port — StartOS only exposes TLS on the LAN.
+UTXOs kommen **nicht** von mempool.space. Im Node-Dialog **Fulcrum oder Electrs** im Heimnetz eintragen, z. B. `192.168.1.20:50001` oder `ssl://fulcrum.local:50002`. Beim **Verbinden** schickt die App `server.version` per Electrum-TCP — im Fulcrum-Log muss eine Session erscheinen.
 
-On **Verbinden** the app sends `server.version` over Electrum TLS (Wi-Fi, SNI, trust the StartOS cert). Fulcrum logs a session only after the handshake completes.
+`127.0.0.1` ist das Telefon, nicht der Node. `.local` oft ohne mDNS — LAN-IP nutzen.
 
-`127.0.0.1` is the phone. Same Wi-Fi as the node.

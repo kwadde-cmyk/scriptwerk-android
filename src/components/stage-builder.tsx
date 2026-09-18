@@ -1,4 +1,5 @@
 import { delayPresets, defaultStages, nextStageDelay, sortedMultiAllowed, stageFormula, type Stage } from "@/lib/miniscript/stages";
+import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { blocksWhen, keyIsFilled, nextKeyName, type KeyEntry } from "@/lib/miniscript/keys";
 import { uid } from "@/lib/utils";
 import { useStudio } from "@/store/studio";
@@ -8,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/lib/use-t";
 import { Minus, Plus, Trash2 } from "lucide-react";
+import { PolicyStatusBanner } from "@/components/interpreter-panel";
 
 export function StageBuilder() {
   const { t } = useT();
@@ -18,6 +20,7 @@ export function StageBuilder() {
   const selectStage = useStudio((s) => s.selectStage);
   const maxOlder = useStudio((s) => s.maxOlder);
   const expert = useStudio((s) => s.mode) === "expert";
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
 
   const allowSorted = sortedMultiAllowed(stages);
   const pool = keys.map((k) => k.name);
@@ -52,11 +55,12 @@ export function StageBuilder() {
       <div className="px-4 pt-4 pb-2">
         <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("stages.title")}</p>
         <p className="mt-1 text-xs text-pretty text-fg-muted">{t(expert ? "stages.blurb" : "stages.blurbEasy")}</p>
+        {frozen ? <PolicyStatusBanner className="mt-3" /> : null}
       </div>
       <ScrollArea className="min-h-0 flex-1 px-3 pb-4">
         <div className="space-y-3">
           {stages.length === 0 ? (
-            <p className="px-1 text-xs text-fg-muted">{t("stages.empty")}</p>
+            <p className="px-1 text-xs text-fg-muted">{t(frozen ? "stages.locked" : "stages.empty")}</p>
           ) : null}
           {stages
             .slice()
@@ -73,14 +77,23 @@ export function StageBuilder() {
                 expert={expert}
                 maxOlder={maxOlder}
                 selected={selectedStageId === s.id}
+                locked={frozen}
                 onSelect={() => selectStage(s.id)}
-                onChange={(next) => patch(s.id, () => next)}
-                onRemove={() => setStages(stages.filter((x) => x.id !== s.id))}
+                onChange={(next) => {
+                  if (frozen) return;
+                  patch(s.id, () => next);
+                }}
+                onRemove={() => {
+                  if (frozen) return;
+                  setStages(stages.filter((x) => x.id !== s.id));
+                }}
               />
             ))}
+          {frozen ? null : (
           <Button variant="outline" className="w-full" onClick={addStage}>
             <Plus /> {stages.length ? t("stages.addLocked") : t("stages.add")}
           </Button>
+          )}
         </div>
       </ScrollArea>
     </div>
@@ -94,6 +107,7 @@ export function ExpertPolicySettings() {
   const setNesting = useStudio((s) => s.setNesting);
   const maxOlder = useStudio((s) => s.maxOlder);
   const setMaxOlder = useStudio((s) => s.setMaxOlder);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   return (
     <div className="space-y-3">
       <div>
@@ -103,6 +117,7 @@ export function ExpertPolicySettings() {
           <button
             type="button"
             aria-pressed={maxOlder === 65534}
+            disabled={frozen}
             onClick={() => setMaxOlder(65534)}
             className={
               maxOlder === 65534
@@ -115,6 +130,7 @@ export function ExpertPolicySettings() {
           <button
             type="button"
             aria-pressed={maxOlder === 65535}
+            disabled={frozen}
             onClick={() => setMaxOlder(65535)}
             className={
               maxOlder === 65535
@@ -134,6 +150,7 @@ export function ExpertPolicySettings() {
             <button
               type="button"
               aria-pressed={nesting === "late"}
+              disabled={frozen}
               onClick={() => setNesting("late")}
               className={
                 nesting === "late"
@@ -146,6 +163,7 @@ export function ExpertPolicySettings() {
             <button
               type="button"
               aria-pressed={nesting === "early"}
+              disabled={frozen}
               onClick={() => setNesting("early")}
               className={
                 nesting === "early"
@@ -172,6 +190,7 @@ function StageCard({
   expert,
   maxOlder,
   selected,
+  locked = false,
   onSelect,
   onChange,
   onRemove,
@@ -185,6 +204,7 @@ function StageCard({
   expert: boolean;
   maxOlder: number;
   selected: boolean;
+  locked?: boolean;
   onSelect: () => void;
   onChange: (s: Stage) => void;
   onRemove: () => void;
@@ -281,7 +301,7 @@ function StageCard({
           </span>
           <span className="mt-1 block font-mono text-2xs text-fg-muted">{stageFormula(stage)}</span>
         </button>
-        {canRemove ? (
+        {canRemove && !locked ? (
           <Button
             variant="ghost"
             size="icon"
@@ -295,6 +315,7 @@ function StageCard({
         ) : null}
       </div>
 
+      <fieldset disabled={locked} className={locked ? "pointer-events-none opacity-60" : "contents"}>
       <div className="grid grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
         <Stepper label={t("stages.keys")} value={n} min={1} max={15} onChange={setN} />
         <Stepper
@@ -524,6 +545,7 @@ function StageCard({
           ))}
         </div>
       </div>
+      </fieldset>
     </article>
   );
 }

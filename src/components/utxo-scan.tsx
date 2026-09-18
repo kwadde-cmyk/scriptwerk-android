@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { compileDescriptorCached } from "@/lib/miniscript/compile";
+import { compiledForStudio } from "@/lib/miniscript/policy-mode";
 import { clampUtxoCount, formatBtc, mergeUtxoResults, UTXO_SCAN_CAP, type UtxoScanResult } from "@/lib/hw/address-check";
 import { scanDescriptorUtxos } from "@/lib/bitcoind/rpc";
 import { useBitcoind } from "@/store/bitcoind";
@@ -25,10 +25,7 @@ export function UtxoScanPanel({
 }) {
   const { t, locale } = useT();
   const fieldId = useId();
-  const root = useStudio((s) => s.root);
-  const keys = useStudio((s) => s.keys);
-  const reuseKeys = useStudio((s) => s.reuseKeys);
-  const compiled = compileDescriptorCached(root, keys, reuseKeys);
+  const compiled = useStudio(compiledForStudio);
   const [count, setCount] = useState(20);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<UtxoScanResult | null>(null);

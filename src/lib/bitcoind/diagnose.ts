@@ -70,12 +70,7 @@ export async function diagnoseNode(
       : "kein Nutzer",
   });
 
-  const { nativeRpcAvailable } = await import("./native-http.ts");
-  const native = nativeRpcAvailable();
-
-  if (native) {
-    steps.push({ id: "http", status: "ok", detail: "nativer HTTP — kein CORS, keine Brücke" });
-  } else if (typeof navigator !== "undefined" && navigator.permissions?.query) {
+  if (typeof navigator !== "undefined" && navigator.permissions?.query) {
     try {
       const perm = await navigator.permissions.query({ name: "local-network-access" as PermissionName });
       steps.push({
@@ -90,6 +85,12 @@ export async function diagnoseNode(
     steps.push({ id: "lna", status: "skip", detail: "API nicht vorhanden" });
   }
 
+  const { nativeRpcAvailable } = await import("./native-http.ts");
+  const native = nativeRpcAvailable();
+  if (native) {
+    steps.push({ id: "http", status: "ok", detail: "nativer HTTP — kein CORS, keine Brücke" });
+  }
+
   try {
     await nodeFetch(url, {
       method: "POST",
@@ -99,58 +100,56 @@ export async function diagnoseNode(
       body: "{}",
       signal: AbortSignal.timeout(4000),
     });
-    steps.push({ id: "reach", status: "ok", detail: native ? "TCP/TLS erreichbar" : "TCP/TLS erreichbar (opaque)" });
+    steps.push({ id: "reach", status: "ok", detail: "TCP/TLS erreichbar (opaque)" });
   } catch (e) {
     steps.push({ id: "reach", status: "fail", detail: errText(e) });
   }
 
-  if (!native) {
-    try {
-      const res = await nodeFetch(url, {
-        method: "GET",
-        mode: "cors",
-        cache: "no-store",
-        signal: AbortSignal.timeout(4000),
-      });
-      const text = await res.text().catch(() => "");
-      const onlyPost = /only POST/i.test(text);
-      steps.push({
-        id: "corsGet",
-        status: onlyPost ? "skip" : "ok",
-        detail: onlyPost
-          ? `HTTP ${res.status} · bitcoind erlaubt nur POST (GET-Meldung ist normal)`
-          : `HTTP ${res.status} · type=${res.type}`,
-      });
-    } catch (e) {
-      steps.push({
-        id: "corsGet",
-        status: "skip",
-        detail: `GET nicht lesbar (${errText(e)}) — bitcoind spricht nur POST, das ist erwartet`,
-      });
-    }
+  try {
+    const res = await nodeFetch(url, {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store",
+      signal: AbortSignal.timeout(4000),
+    });
+    const text = await res.text().catch(() => "");
+    const onlyPost = /only POST/i.test(text);
+    steps.push({
+      id: "corsGet",
+      status: onlyPost ? "skip" : "ok",
+      detail: onlyPost
+        ? `HTTP ${res.status} · bitcoind erlaubt nur POST (GET-Meldung ist normal)`
+        : `HTTP ${res.status} · type=${res.type}`,
+    });
+  } catch (e) {
+    steps.push({
+      id: "corsGet",
+      status: "skip",
+      detail: `GET nicht lesbar (${errText(e)}) — bitcoind spricht nur POST, das ist erwartet`,
+    });
+  }
 
-    try {
-      const res = await nodeFetch(url, {
-        method: "OPTIONS",
-        mode: "cors",
-        cache: "no-store",
-        headers: {
-          "Access-Control-Request-Method": "POST",
-          "Access-Control-Request-Headers": "authorization,content-type",
-        },
-        signal: AbortSignal.timeout(4000),
-      });
-      const acao = res.headers.get("access-control-allow-origin");
-      const acah = res.headers.get("access-control-allow-headers");
-      const acam = res.headers.get("access-control-allow-methods");
-      steps.push({
-        id: "preflight",
-        status: acao ? "ok" : "warn",
-        detail: `HTTP ${res.status} · ACAO=${acao || "—"} · Headers=${acah || "—"} · Methods=${acam || "—"}`,
-      });
-    } catch (e) {
-      steps.push({ id: "preflight", status: "fail", detail: errText(e) });
-    }
+  try {
+    const res = await nodeFetch(url, {
+      method: "OPTIONS",
+      mode: "cors",
+      cache: "no-store",
+      headers: {
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type",
+      },
+      signal: AbortSignal.timeout(4000),
+    });
+    const acao = res.headers.get("access-control-allow-origin");
+    const acah = res.headers.get("access-control-allow-headers");
+    const acam = res.headers.get("access-control-allow-methods");
+    steps.push({
+      id: "preflight",
+      status: acao ? "ok" : "warn",
+      detail: `HTTP ${res.status} · ACAO=${acao || "—"} · Headers=${acah || "—"} · Methods=${acam || "—"}`,
+    });
+  } catch (e) {
+    steps.push({ id: "preflight", status: "fail", detail: errText(e) });
   }
 
   let probe: NodeProbe | null = null;

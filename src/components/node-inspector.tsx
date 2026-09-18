@@ -1,4 +1,5 @@
 import { findNode } from "@/lib/miniscript/ast";
+import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,7 @@ export function NodeInspector() {
   const patchNode = useStudio((s) => s.patchNode);
   const deleteSelected = useStudio((s) => s.deleteSelected);
   const unwrapSelected = useStudio((s) => s.unwrapSelected);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const node = root && selectedId ? findNode(root, selectedId) : null;
 
   if (!node) {
@@ -25,11 +27,11 @@ export function NodeInspector() {
         <p className="font-mono text-sm">{node.kind === "hole" ? t("insp.hole") : node.kind}</p>
         <div className="flex gap-1">
           {node.kind === "wrap" ? (
-            <Button variant="ghost" size="sm" onClick={unwrapSelected}>
+            <Button variant="ghost" size="sm" disabled={frozen} onClick={unwrapSelected}>
               <Undo2 /> {t("insp.unwrap")}
             </Button>
           ) : null}
-          <Button variant="ghost" size="sm" onClick={deleteSelected}>
+          <Button variant="ghost" size="sm" disabled={frozen} onClick={deleteSelected}>
             <Trash2 /> {t("insp.delete")}
           </Button>
         </div>
@@ -40,6 +42,7 @@ export function NodeInspector() {
             list="scriptwerk-keys"
             className="font-mono"
             value={node.key}
+            disabled={frozen}
             onChange={(e) => patchNode(node.id, { key: e.target.value })}
           />
         </Field>
@@ -49,6 +52,7 @@ export function NodeInspector() {
           <Input
             type="number"
             value={node.n}
+            disabled={frozen}
             onChange={(e) => patchNode(node.id, { n: Number(e.target.value) })}
           />
         </Field>
@@ -61,6 +65,7 @@ export function NodeInspector() {
               min={1}
               max={node.keys.length}
               value={node.k}
+              disabled={frozen}
               onChange={(e) => patchNode(node.id, { k: Number(e.target.value) })}
             />
           </Field>
@@ -68,6 +73,7 @@ export function NodeInspector() {
             <Input
               className="font-mono"
               value={node.keys.join(",")}
+              disabled={frozen}
               onChange={(e) =>
                 patchNode(node.id, {
                   keys: e.target.value
@@ -87,10 +93,15 @@ export function NodeInspector() {
             min={1}
             max={node.children.length}
             value={node.k}
+            disabled={frozen}
             onChange={(e) => patchNode(node.id, { k: Number(e.target.value) })}
           />
         </Field>
       ) : null}
+      {node.kind === "unknown" ? (
+        <p className="font-mono text-xs break-all text-fg-muted">{node.raw || node.name}</p>
+      ) : null}
+      {frozen ? <p className="text-xs text-fg-muted">{t("stages.locked")}</p> : null}
       {node.kind === "hole" ? <p className="text-xs text-fg-muted">{t("insp.fill")}</p> : null}
     </div>
   );

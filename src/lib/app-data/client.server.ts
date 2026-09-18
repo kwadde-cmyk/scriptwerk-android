@@ -4,11 +4,9 @@ import {
   assertSameSiteRequest,
   CrossSiteRequestError,
 } from "../auth/isolation.server.ts";
-import { env, isWorkspacePreview } from "../env.server.ts";
 import { assertAppDataServerOnly } from "./server-only.ts";
 import {
   CONNECTOR_TOKEN_HEADER,
-  CONNECTOR_TOKEN_PENDING_CODE,
   ConnectorType,
   type CallToolOptions,
   type CallToolResult,
@@ -19,6 +17,11 @@ assertAppDataServerOnly("app-data/client.server");
 
 export const CONNECTORS_HOST_STAGING = "connectors.app-builder-testing.com";
 export const CONNECTORS_HOST_PROD = "connectors.grok.me";
+
+function env(key: string): string | undefined {
+  const v = process.env[key]?.trim();
+  return v || undefined;
+}
 
 function isLoopbackHost(host: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
@@ -79,36 +82,6 @@ export function resolveGateAppDataBase(): string | null {
 
 export function getConnectorAccessToken(): string | null {
   return inboundContext().token;
-}
-
-export { isWorkspacePreview } from "../env.server.ts";
-
-// Digest of the last preview token the gate answered 401 for. The readiness
-// probe reports "not ready" while that exact token is still the one on the
-// request, so the client waits for the preview panel to push a fresh token
-// instead of re-calling the gate with a token already known to be rejected.
-let rejectedTokenDigest: string | null = null;
-
-function tokenDigest(token: string): string {
-  return createHash("sha256").update(token).digest("base64url");
-}
-
-function noteTokenRejected(token: string): void {
-  rejectedTokenDigest = tokenDigest(token);
-}
-
-function noteTokenAccepted(token: string): void {
-  if (rejectedTokenDigest === tokenDigest(token)) rejectedTokenDigest = null;
-}
-
-/**
- * True when the inbound request carries a connector token the gate has not
- * rejected. This is what the preview readiness probe reports; it never calls
- * the gate.
- */
-export function isConnectorTokenReady(): boolean {
-  const token = inboundContext().token;
-  return token !== null && tokenDigest(token) !== rejectedTokenDigest;
 }
 
 type GateJson = {
@@ -190,55 +163,15 @@ function gateSigninUrl(ctx: InboundContext): string | undefined {
   }
 }
 
-const PENDING_TOKEN_MISSING =
-  "the preview has not received the connector token yet; it arrives once " +
-  "the connector grant is approved";
-const PENDING_TOKEN_REJECTED =
-  "the gate rejected the current preview token; the preview panel pushes a " +
-  "fresh one on its own schedule";
-
-function pendingTokenResult(reason: string): CallToolResult {
-  return {
-    ok: false,
-    data: null,
-    pending: true,
-    errorMessage: `${CONNECTOR_TOKEN_PENDING_CODE}: ${reason}`,
-  };
-}
-
-// Deployed apps only reach here when the request bypassed the gate (the gate
-// injects the token on every proxied request), so a sign-in redirect cannot
-// fix it: no loginRequired / loginUrl.
-function missingAuthResult(): CallToolResult {
-  if (isWorkspacePreview()) return pendingTokenResult(PENDING_TOKEN_MISSING);
-  return {
-    ok: false,
-    data: null,
-    errorMessage:
-      "missing_connector_token: open this app through the edge gate " +
-      "(the server must receive x-connector-access-token on the inbound request)",
-  };
-}
-
-function unauthorizedResult(
-  ctx: InboundContext,
-  json: GateJson,
-  token: string,
-): CallToolResult {
-  if (isWorkspacePreview()) {
-    noteTokenRejected(token);
-    return pendingTokenResult(PENDING_TOKEN_REJECTED);
-  }
-  const loginUrl =
-    gateSigninUrl(ctx) ??
-    (typeof json.loginUrl === "string" && json.loginUrl
-      ? json.loginUrl
-      : undefined);
+function missingAuthResult(ctx: InboundContext): CallToolResult {
+  const loginUrl = gateSigninUrl(ctx);
   return {
     ok: false,
     data: null,
     loginRequired: true,
-    errorMessage: json.errorMessage ?? "login required",
+    errorMessage:
+      "missing_connector_token: open this app through the edge gate " +
+      "(the server must receive x-connector-access-token on the inbound request)",
     ...(loginUrl ? { loginUrl } : {}),
   };
 }
@@ -342,7 +275,7 @@ export async function callTool(
   const ctx = inboundContext();
   const token = options.token ?? ctx.token;
   if (!token) {
-    return missingAuthResult();
+    return missingAuthResult(ctx);
   }
 
   const connectorType = options.connectorType;
@@ -391,9 +324,19 @@ export async function callTool(
     );
 
     if (status === 401) {
-      return unauthorizedResult(ctx, json, token);
+      const loginUrl =
+        gateSigninUrl(ctx) ??
+        (typeof json.loginUrl === "string" && json.loginUrl
+          ? json.loginUrl
+          : undefined);
+      return {
+        ok: false,
+        data: null,
+        loginRequired: true,
+        errorMessage: json.errorMessage ?? "login required",
+        ...(loginUrl ? { loginUrl } : {}),
+      };
     }
-    noteTokenAccepted(token);
     if (status === 403) {
       return fail(json.errorMessage ?? "access_denied");
     }
@@ -414,7 +357,6 @@ export async function callTool(
 
 export {
   ConnectorType,
-  GoogleCalendarTools,
   GoogleDriveTools,
   CONNECTOR_TOKEN_HEADER,
 } from "./types.ts";

@@ -1,5 +1,5 @@
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
-import { hasWebHid, hasWebUsb, isFramed } from "../platform.ts";
+import { hasWebHid, isFramed } from "../platform.ts";
 
 export type HwKind = "ledger" | "bitbox";
 
@@ -29,30 +29,19 @@ export interface HwSession {
   close: () => Promise<void>;
 }
 
-export type HidSupport = "ok" | "usb" | "missing" | "iframe";
-export type LedgerTransportKind = "hid" | "usb" | "iframe" | "none";
+export type HidSupport = "ok" | "missing" | "iframe";
 
 export function detectHid(): HidSupport {
   if (typeof window === "undefined") return "missing";
   if (isFramed()) return "iframe";
   if (hasWebHid()) return "ok";
-  if (hasWebUsb()) return "usb";
-  return "missing";
-}
-
-export function pickLedgerTransport(access: HidSupport): LedgerTransportKind {
-  if (access === "iframe") return "iframe";
-  if (access === "ok") return "hid";
-  if (access === "usb") return "usb";
-  return "none";
-}
-
-export function ledgerUsbAvailable(access: HidSupport): boolean {
-  return access === "ok" || access === "usb";
-}
-
-export function bitboxUsbAvailable(access: HidSupport): boolean {
-  return access === "ok";
+  if (typeof navigator === "undefined" || !("hid" in navigator) || !navigator.hid) return "missing";
+  try {
+    if (window.self !== window.top) return "iframe";
+  } catch {
+    return "iframe";
+  }
+  return "ok";
 }
 
 export function defaultAccountPath(account = 0): string {
@@ -81,7 +70,6 @@ export function hwErrorMessage(err: unknown): string {
   if (typeof err === "string") return err;
   const e = err as { message?: string; name?: string; statusCode?: number };
   const msg = e.message || "";
-  if (msg.startsWith("hw.")) return msg;
   if (/NotFoundError|No device selected/i.test(msg)) return "hw.err.none";
   if (/NotAllowedError|denied|permission/i.test(msg)) return "hw.err.denied";
   if (/iframe|SecurityError/i.test(msg)) return "hw.err.iframe";
@@ -90,7 +78,6 @@ export function hwErrorMessage(err: unknown): string {
   if (/0x6a80|INCORRECT_DATA|Invalid data received/i.test(msg) || e.statusCode === 0x6a80) return "hw.err.6a80";
   if (/locked|pin/i.test(msg)) return "hw.err.locked";
   if (/Bitcoin|wrong app|ins not supported|0x6d00/i.test(msg)) return "hw.err.app";
-  if (/WebUSB|usb/i.test(msg) && /unsupported|unavailable|not available/i.test(msg)) return "hw.err.usb";
   if (/HID|WebHID|unsupported/i.test(msg)) return "hw.err.hid";
   return msg || "hw.err.generic";
 }

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { compileBsms, compileDescriptorCached } from "@/lib/miniscript/compile";
+import { useCallback, useMemo, useState } from "react";
+import { compileBsms } from "@/lib/miniscript/compile";
+import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { formatExportWithKeys, formatKeyList } from "@/lib/miniscript/keys";
 import {
   compileBip388,
@@ -30,10 +31,8 @@ import { NodeButton } from "@/components/node-rpc";
 import { ScriptHighlight } from "@/components/script-view";
 import { useHardware } from "@/store/hardware";
 import { useT } from "@/lib/use-t";
-import { Download, FolderOpen, QrCode, Redo2, RotateCcw, Share2, Undo2, Usb } from "lucide-react";
+import { Download, FolderOpen, QrCode, Redo2, RotateCcw, Undo2, Usb } from "lucide-react";
 import { toast } from "sonner";
-import { canShare, shareText } from "@/components/android-chrome";
-import { parseLaunchIntent, stripLaunchIntent } from "@/lib/platform";
 
 export function ImportExportBar() {
   const { t } = useT();
@@ -51,20 +50,20 @@ export function ImportExportBar() {
   const [open, setOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const [camLaunch, setCamLaunch] = useState(false);
   const walletName = useStudio((s) => s.policyName);
   const setWalletName = useStudio((s) => s.setPolicyName);
 
-  const compiled = useMemo(
-    () => compileDescriptorCached(root, keys, reuseKeys),
-    [root, keys, reuseKeys],
-  );
+  const compiled = useStudio(compiledForStudio);
+  const policyMode = useStudio((s) => s.policyMode);
+  const originalDescriptor = useStudio((s) => s.originalDescriptor);
+  const liftWarning = useStudio((s) => s.liftWarning);
+  const frozen = policyIsFrozen(policyMode);
   const miniscript = compiled?.miniscript ?? "";
   const descriptor = compiled?.ok ? compiled.descriptor : "";
   const bsms = useMemo(() => (descriptor ? compileBsms(descriptor) : ""), [descriptor]);
   const bip = useMemo(
-    () => (exportOpen && root ? compileBip388(root, keys, walletName, reuseKeys) : null),
-    [exportOpen, root, keys, walletName, reuseKeys],
+    () => (!frozen && exportOpen && root ? compileBip388(root, keys, walletName, reuseKeys) : null),
+    [frozen, exportOpen, root, keys, walletName, reuseKeys],
   );
 
   function download(filename: string, body: string) {
@@ -95,13 +94,16 @@ export function ImportExportBar() {
         keys,
         reuseKeys,
         network,
+        policyMode,
+        originalDescriptor,
+        liftWarning,
       }),
     );
-    if (bip?.ok) {
+    if (bip?.ok && !frozen) {
       download("scriptwerk-ledger.json", formatLedgerJson(bip.policy));
       download("scriptwerk-bitbox.json", formatBitboxJson(bip.policy));
     }
-    toast.success(bip?.ok ? t("export.okDevices") : t("export.ok"));
+    toast.success(bip?.ok && !frozen ? t("export.okDevices") : t("export.ok"));
   }
 
   const onQrRead = useCallback(
@@ -115,19 +117,6 @@ export function ImportExportBar() {
     },
     [importText, t],
   );
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const intent = parseLaunchIntent(window.location.search, window.location.hash);
-    if (!intent) return;
-    const clean = stripLaunchIntent(new URL(window.location.href));
-    window.history.replaceState(null, "", `${clean.pathname}${clean.search}${clean.hash}`);
-    if (intent === "scan") {
-      setCamLaunch(true);
-      setOpen(true);
-    }
-    if (intent === "usb") useHardware.getState().setOpen(true);
-  }, []);
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -156,7 +145,7 @@ export function ImportExportBar() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="qr" className="space-y-3">
-              <QrScanner compact autoStart={camLaunch} onRead={onQrRead} />
+              <QrScanner compact onRead={onQrRead} />
               <FilePick
                 onRead={(text) => {
                   setDraft(text);
@@ -223,12 +212,16 @@ export function ImportExportBar() {
                 <TabsTrigger value="miniscript" className="px-2.5 text-xs">
                   Miniscript
                 </TabsTrigger>
+                {!frozen ? (
+                  <>
                 <TabsTrigger value="ledger" className="px-2.5 text-xs">
                   {t("export.ledger")}
                 </TabsTrigger>
                 <TabsTrigger value="bitbox" className="px-2.5 text-xs">
                   {t("export.bitbox")}
                 </TabsTrigger>
+                  </>
+                ) : null}
                 <TabsTrigger value="bsms" className="px-2.5 text-xs">
                   BSMS
                 </TabsTrigger>
@@ -271,8 +264,7 @@ export function ImportExportBar() {
               </TabsContent>
             </Tabs>
           )}
-          <div className="mt-3 flex flex-wrap justify-end gap-2">
-            <ShareButtonInline title="Scriptwerk" text={descriptor || miniscript} />
+          <div className="mt-3 flex justify-end">
             <Button variant="outline" size="sm" onClick={exportFiles}>
               <Download /> {t("export.files")}
             </Button>
@@ -402,31 +394,17 @@ function CopyText({ value }: { value: string }) {
         value={value}
         className="max-h-40 overflow-auto rounded-lg border border-border bg-ink px-3 py-2 font-mono text-2xs leading-relaxed break-all whitespace-pre-wrap"
       />
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1"
-          onClick={async () => {
-            await navigator.clipboard.writeText(value);
-            toast.success(t("read.copied"));
-          }}
-        >
-          {t("export.copy")}
-        </Button>
-        <ShareButtonInline title="Scriptwerk" text={value} />
-      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={async () => {
+          await navigator.clipboard.writeText(value);
+          toast.success(t("read.copied"));
+        }}
+      >
+        {t("export.copy")}
+      </Button>
     </div>
-  );
-}
-
-function ShareButtonInline({ title, text }: { title: string; text: string }) {
-  const { t } = useT();
-  if (!text || !canShare()) return null;
-  return (
-    <Button variant="outline" size="sm" onClick={() => void shareText(title, text)}>
-      <Share2 className="size-3.5" />
-      {t("android.share")}
-    </Button>
   );
 }

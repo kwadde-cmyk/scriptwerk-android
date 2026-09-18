@@ -190,6 +190,10 @@ function approx(n: number, locale: Locale = "de"): string {
   return t(locale, "approx.years", { n: (days / 365.25).toFixed(1) });
 }
 
+export function blocksApprox(n: number, locale: Locale = "de"): string {
+  return approx(n, locale);
+}
+
 export function blocksToHuman(n: number, locale: Locale = "de"): string {
   return t(locale, "time.human", {
     n: n.toLocaleString(numberLocale(locale)),

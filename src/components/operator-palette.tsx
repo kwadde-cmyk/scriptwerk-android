@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { OPERATORS, WRAPPERS, type OperatorDef } from "@/lib/miniscript/operators";
 import { delayPresets } from "@/lib/miniscript/stages";
+import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +23,7 @@ export function OperatorPalette({ embedded = false }: { embedded?: boolean }) {
   const applyOperator = useStudio((s) => s.applyOperator);
   const wrapSelected = useStudio((s) => s.wrapSelected);
   const keys = useStudio((s) => s.keys);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const [pending, setPending] = useState<OperatorDef | null>(null);
 
   const groups = useMemo(() => {
@@ -35,6 +37,7 @@ export function OperatorPalette({ embedded = false }: { embedded?: boolean }) {
   }, []);
 
   function onPick(op: OperatorDef) {
+    if (frozen) return;
     if (op.params.length === 0 && op.id !== "thresh") {
       applyOperator(op.id, {});
       return;
@@ -56,6 +59,7 @@ export function OperatorPalette({ embedded = false }: { embedded?: boolean }) {
                       <button
                         type="button"
                         aria-label={op.label}
+                        disabled={frozen}
                         onClick={() => onPick(op)}
                         className="rounded-lg border border-border bg-surface px-2.5 py-2 text-left transition-colors hover:border-border-strong hover:bg-muted"
                       >
@@ -80,6 +84,7 @@ export function OperatorPalette({ embedded = false }: { embedded?: boolean }) {
                     <button
                       type="button"
                       aria-label={t("ops.wrapAria", { code: w.code })}
+                      disabled={frozen}
                       onClick={() => wrapSelected(w.code)}
                       className="h-9 min-w-9 rounded-md border border-border bg-surface px-2 font-mono text-xs hover:bg-muted"
                     >
@@ -98,7 +103,7 @@ export function OperatorPalette({ embedded = false }: { embedded?: boolean }) {
     <div className={embedded ? "" : "flex h-full flex-col"}>
       <div className="px-4 pt-4 pb-2">
         <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("ops.title")}</p>
-        <p className="mt-1 text-xs text-fg-muted">{t("ops.blurb")}</p>
+        <p className="mt-1 text-xs text-fg-muted">{frozen ? t("stages.locked") : t("ops.blurb")}</p>
       </div>
       {embedded ? (
         <div className="px-3 pb-4">{inner}</div>

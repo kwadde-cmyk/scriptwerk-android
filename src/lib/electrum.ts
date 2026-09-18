@@ -114,6 +114,18 @@ export function parseElectrumUrl(raw: string): ElectrumTarget | null {
   return { host, port, tls: port === 50002 };
 }
 
+export function electrumHostAllowed(host: string, envUrl = ""): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h) return false;
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
+  if (h.endsWith(".local") || h.endsWith(".lan")) return true;
+  if (/^10(?:\.\d{1,3}){3}$/.test(h)) return true;
+  if (/^192\.168(?:\.\d{1,3}){2}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/.test(h)) return true;
+  const env = parseElectrumUrl(envUrl);
+  return Boolean(env && env.host.toLowerCase() === h);
+}
+
 export function isLoopbackHost(host: string): boolean {
   const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
   return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0";
@@ -125,16 +137,6 @@ export function isPrivateIpv4(host: string): boolean {
   if (/^192\.168(?:\.\d{1,3}){2}$/.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/.test(h)) return true;
   return false;
-}
-
-export function electrumHostAllowed(host: string, envUrl = ""): boolean {
-  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
-  if (!h) return false;
-  if (isLoopbackHost(h)) return true;
-  if (h.endsWith(".local") || h.endsWith(".lan")) return true;
-  if (isPrivateIpv4(h)) return true;
-  const env = parseElectrumUrl(envUrl);
-  return Boolean(env && env.host.toLowerCase() === h);
 }
 
 export function isPublicIndexerHost(host: string): boolean {
@@ -152,7 +154,6 @@ export function indexerHostAllowed(host: string, envUrl = ""): boolean {
   return electrumHostAllowed(host, envUrl) && !isPublicIndexerHost(host);
 }
 
-/** APK talks TCP itself — allow LAN hostnames, still block public indexers and the phone loopback. Keep in sync with ElectrumHostPlugin.hostAllowed. */
 export function nativeIndexerHostAllowed(host: string): boolean {
   const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (!h) return false;
@@ -166,4 +167,3 @@ export function formatElectrumVersion(raw: unknown): string {
   if (raw == null) return "";
   return String(raw);
 }
-

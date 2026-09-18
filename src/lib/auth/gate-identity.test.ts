@@ -3,11 +3,8 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, type KeyObject } from "node:crypto";
 import { SignJWT, exportJWK, type JWK } from "jose";
 import {
-  gateIdentityEnabled,
   gateIdentityFromHeaders,
-  gateIdentityUserInfo,
   gateKeyResolver,
-  gateTokenAudience,
   sessionBoundToGateIdentity,
   verifyGateIdentityToken,
   type GateJwks,
@@ -269,97 +266,7 @@ describe("gateIdentityFromHeaders", () => {
     }
   });
 
-  it("verifies a preview-audience token with no gate env vars via the loopback default", async () => {
-    const key = await makeKey("k-preview");
-    const fetchedFrom: string[] = [];
-    const fetchImpl = async (url: string): Promise<GateJwks> => {
-      fetchedFrom.push(url);
-      return { keys: [key.jwk] };
-    };
-    delete process.env.GROK_PROJECT_ID;
-    delete process.env.GROK_GATE_ORIGIN;
-    const token = await signToken(
-      key,
-      { sub: "user-1" },
-      { issuer: "http://127.0.0.1:6014", audience: "preview" },
-    );
-    const identity = await gateIdentityFromHeaders(
-      new Headers({
-        host: "my-session.grok-sandbox.com",
-        "x-grok-identity": token,
-      }),
-      fetchImpl,
-    );
-    assert.equal(identity?.sub, "user-1");
-    assert.equal(fetchedFrom[0], "http://127.0.0.1:6014/__gate/identity-key");
-  });
-
-  it("rejects a wrong-issuer token in the loopback default mode", async () => {
-    const key = await makeKey("k-preview-iss");
-    const { fetchImpl } = staticJwks([key.jwk]);
-    delete process.env.GROK_PROJECT_ID;
-    delete process.env.GROK_GATE_ORIGIN;
-    const token = await signToken(
-      key,
-      { sub: "user-1" },
-      { issuer: ISSUER, audience: "preview" },
-    );
-    const identity = await gateIdentityFromHeaders(
-      new Headers({ "x-grok-identity": token }),
-      fetchImpl,
-    );
-    assert.equal(identity, null);
-  });
-
-  it("verifies a preview-audience token when only GROK_GATE_ORIGIN is set", async () => {
-    const key = await makeKey("k1");
-    const { fetchImpl } = staticJwks([key.jwk]);
-    delete process.env.GROK_PROJECT_ID;
-    process.env.GROK_GATE_ORIGIN = ISSUER;
-    try {
-      const token = await signToken(
-        key,
-        { sub: "user-1" },
-        { audience: "preview" },
-      );
-      const identity = await gateIdentityFromHeaders(
-        new Headers({ "x-grok-identity": token }),
-        fetchImpl,
-      );
-      assert.deepEqual(identity, {
-        sub: "user-1",
-        email: null,
-        name: null,
-        teamId: null,
-      });
-    } finally {
-      delete process.env.GROK_GATE_ORIGIN;
-    }
-  });
-
-  it("rejects a preview-audience token when GROK_PROJECT_ID is set", async () => {
-    const key = await makeKey("k1");
-    const { fetchImpl } = staticJwks([key.jwk]);
-    process.env.GROK_PROJECT_ID = "proj-123";
-    process.env.GROK_GATE_ORIGIN = ISSUER;
-    try {
-      const token = await signToken(
-        key,
-        { sub: "user-1" },
-        { audience: "preview" },
-      );
-      const identity = await gateIdentityFromHeaders(
-        new Headers({ "x-grok-identity": token }),
-        fetchImpl,
-      );
-      assert.equal(identity, null);
-    } finally {
-      delete process.env.GROK_PROJECT_ID;
-      delete process.env.GROK_GATE_ORIGIN;
-    }
-  });
-
-  it("rejects an app-audience token in preview mode", async () => {
+  it("fails closed when GROK_PROJECT_ID is unset", async () => {
     const key = await makeKey("k1");
     const { fetchImpl } = staticJwks([key.jwk]);
     delete process.env.GROK_PROJECT_ID;
@@ -374,82 +281,6 @@ describe("gateIdentityFromHeaders", () => {
     } finally {
       delete process.env.GROK_GATE_ORIGIN;
     }
-  });
-});
-
-describe("gateIdentityEnabled", () => {
-  it("is enabled by default with no gate env vars", () => {
-    delete process.env.GROK_PROJECT_ID;
-    delete process.env.GROK_GATE_ORIGIN;
-    assert.equal(gateIdentityEnabled(), true);
-  });
-
-  it("is disabled when VITE_AUTH_ENABLED is false", () => {
-    process.env.VITE_AUTH_ENABLED = "false";
-    try {
-      assert.equal(gateIdentityEnabled(), false);
-    } finally {
-      delete process.env.VITE_AUTH_ENABLED;
-    }
-  });
-});
-
-describe("gateTokenAudience", () => {
-  it("pins app:<id> when GROK_PROJECT_ID is set, even alongside GROK_GATE_ORIGIN", () => {
-    process.env.GROK_PROJECT_ID = "proj-123";
-    process.env.GROK_GATE_ORIGIN = ISSUER;
-    try {
-      assert.equal(gateTokenAudience(), "app:proj-123");
-    } finally {
-      delete process.env.GROK_PROJECT_ID;
-      delete process.env.GROK_GATE_ORIGIN;
-    }
-  });
-
-  it("pins preview when GROK_PROJECT_ID is unset", () => {
-    delete process.env.GROK_PROJECT_ID;
-    process.env.GROK_GATE_ORIGIN = ISSUER;
-    try {
-      assert.equal(gateTokenAudience(), "preview");
-    } finally {
-      delete process.env.GROK_GATE_ORIGIN;
-    }
-  });
-});
-
-describe("gateIdentityUserInfo", () => {
-  it("falls back to a synthetic email and name for sub-only claims", () => {
-    assert.deepEqual(
-      gateIdentityUserInfo({
-        sub: "User-1",
-        email: null,
-        name: null,
-        teamId: null,
-      }),
-      {
-        id: "User-1",
-        email: "user-1@viewer.grok.invalid",
-        emailVerified: false,
-        name: "Grok user",
-      },
-    );
-  });
-
-  it("keeps real claims, lowercasing the email and marking it verified", () => {
-    assert.deepEqual(
-      gateIdentityUserInfo({
-        sub: "user-1",
-        email: "Viewer@Example.com",
-        name: "Viewer",
-        teamId: "team-9",
-      }),
-      {
-        id: "user-1",
-        email: "viewer@example.com",
-        emailVerified: true,
-        name: "Viewer",
-      },
-    );
   });
 });
 

@@ -136,6 +136,10 @@ function flatten(
         },
       ];
     }
+    case "unknown":
+      return [{ delay, label: node.name, detail: node.raw || node.name }];
+    default:
+      return [{ delay, label: t(locale, "explain.incomplete"), detail: t(locale, "explain.hole") }];
   }
 }
 
@@ -226,5 +230,7 @@ export function nodeSubtitle(node: MsNode, locale: Locale = "de"): string {
       return t(locale, "sub.any");
     case "wrap":
       return "";
+    case "unknown":
+      return node.raw || node.name;
   }
 }

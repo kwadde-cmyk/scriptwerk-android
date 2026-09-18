@@ -39,6 +39,8 @@ function compileNode(node: MsNode): string {
       return `andor(${compileNode(node.x)},${compileNode(node.y)},${compileNode(node.z)})`;
     case "wrap":
       return `${node.wrap}:${compileNode(node.child)}`;
+    case "unknown":
+      return node.raw || `${node.name}()`;
   }
 }
 

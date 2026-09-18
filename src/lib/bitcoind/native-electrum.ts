@@ -1,3 +1,4 @@
+import { registerPlugin } from "@capacitor/core";
 import type { UtxoScanResult } from "../hw/address-check.ts";
 import {
   formatElectrumVersion,
@@ -13,6 +14,7 @@ import { nativeRpcAvailable, withDeadline } from "./native-http.ts";
 type ElectrumCall = { method: string; params: unknown[] };
 
 type ElectrumHostPlugin = {
+  ready: () => Promise<{ ok?: boolean; via?: string; sdk?: number }>;
   ping: (opts: {
     host: string;
     port: number;
@@ -28,8 +30,8 @@ type ElectrumHostPlugin = {
     error?: string;
     detail?: string;
     ip?: string;
-    net?: string;
     attempt?: string;
+    cert?: string;
   }>;
   rpc: (opts: {
     host: string;
@@ -80,14 +82,17 @@ function assertNativeTarget(server: string): ElectrumTarget {
   return target;
 }
 
-async function electrumHost(): Promise<ElectrumHostPlugin> {
-  const { registerPlugin } = await import("@capacitor/core");
-  return registerPlugin<ElectrumHostPlugin>("ElectrumHost");
+const ElectrumHost = registerPlugin<ElectrumHostPlugin>("ElectrumHost");
+
+function electrumHost(): ElectrumHostPlugin {
+  return ElectrumHost;
 }
 
-function sniHost(target: ElectrumTarget): string | undefined {
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(target.host)) return undefined;
-  return target.host;
+function sniHost(target: ElectrumTarget, fallback?: string): string | undefined {
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(target.host)) return target.host;
+  const extra = (fallback || "").trim();
+  if (extra && !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(extra)) return extra;
+  return undefined;
 }
 
 function electrumFail(e: unknown): Error {
@@ -114,27 +119,27 @@ function electrumFail(e: unknown): Error {
   return new Error(extra ? `${key} · ${extra}` : key);
 }
 
-function throwIfNativeFail(res: { ok?: boolean; error?: string; detail?: string; ip?: string; net?: string; attempt?: string; via?: string } | null | undefined) {
+function throwIfNativeFail(res: { ok?: boolean; error?: string; detail?: string; ip?: string; attempt?: string; via?: string; cert?: string } | null | undefined) {
   if (res && res.ok === false) {
-    const bits = [res.error || "hw.utxo.unreachable", res.ip, res.net, res.attempt, res.detail].filter(Boolean);
+    const bits = [res.error || "hw.utxo.unreachable", res.ip, res.attempt, res.detail, res.cert].filter(Boolean);
     throw new Error(bits.join(" · "));
   }
 }
 
-export async function nativeElectrumRpc(target: ElectrumTarget, calls: ElectrumCall[], timeoutMs = 25000): Promise<unknown[]> {
+export async function nativeElectrumRpc(target: ElectrumTarget, calls: ElectrumCall[], timeoutMs = 25000, sniFallback?: string): Promise<unknown[]> {
   if (!nativeRpcAvailable()) throw new Error("hw.utxo.needElectrum");
-  const plugin = await electrumHost();
+  const plugin = electrumHost();
   try {
     const res = await withDeadline(
       plugin.rpc({
         host: target.host,
         port: target.port,
         tls: target.tls,
-        sni: sniHost(target),
+        sni: sniHost(target, sniFallback),
         callsJson: JSON.stringify(calls),
         timeoutMs,
       }),
-      timeoutMs + 2000,
+      timeoutMs + 4000,
       "hw.utxo.unreachable",
     );
     throwIfNativeFail(res);
@@ -144,28 +149,31 @@ export async function nativeElectrumRpc(target: ElectrumTarget, calls: ElectrumC
   }
 }
 
-export async function nativeElectrumPing(server: string): Promise<{ version: string; host: string; port: number }> {
+export async function nativeElectrumPing(server: string, sniFallback?: string): Promise<{ version: string; host: string; port: number; cert?: string }> {
   const target = assertNativeTarget(server);
   if (!nativeRpcAvailable()) throw new Error("hw.utxo.needElectrum");
-  const plugin = await electrumHost();
+  const plugin = electrumHost();
   try {
+    const alive = await withDeadline(plugin.ready(), 2500, "hw.utxo.plugin");
+    if (!alive?.ok) throw new Error("hw.utxo.plugin");
     const res = await withDeadline(
       plugin.ping({
         host: target.host,
         port: target.port,
         tls: target.tls,
-        sni: sniHost(target),
-        timeoutMs: 8000,
+        sni: sniHost(target, sniFallback),
+        timeoutMs: 6000,
       }),
-      14000,
+      10000,
       "hw.utxo.unreachable",
     );
     throwIfNativeFail(res);
-    if (!res || (res.ok === false)) throw new Error("hw.utxo.unreachable");
+    if (!res || res.ok === false) throw new Error("hw.utxo.unreachable");
     return {
       version: formatElectrumVersion(res.version) || "server.version",
       host: String(res.host || target.host),
       port: Number(res.port) || target.port,
+      cert: res.cert,
     };
   } catch (e) {
     throw electrumFail(e);

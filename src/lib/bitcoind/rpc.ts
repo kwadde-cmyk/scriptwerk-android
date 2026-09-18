@@ -184,8 +184,6 @@ export async function jsonRpcDirect(
       break;
     } catch (e) {
       lastErr = e;
-      const msg = e instanceof Error ? e.message : "";
-      if (msg === "node.err.unreachable" || msg === "node.err.blocked") break;
     }
   }
   if (!res) throw classifyFetchError(lastErr);
@@ -202,10 +200,8 @@ export async function jsonRpc(
   method: string,
   params: unknown[] = [],
 ): Promise<unknown> {
-  const { nativeRpcAvailable, skipNodeBridge } = await import("./native-http.ts");
-  if (nativeRpcAvailable()) return jsonRpcDirect(config, method, params);
   const { isBridgeOn, rpcViaBridge } = await import("./bridge.ts");
-  if (!skipNodeBridge() && isBridgeOn()) {
+  if (isBridgeOn()) {
     const a = splitCookie(config.username, config.password);
     return rpcViaBridge(method, params, { user: a.username, pass: a.password });
   }
@@ -213,7 +209,7 @@ export async function jsonRpc(
   try {
     return await jsonRpcDirect(config, method, params);
   } catch (e) {
-    if (skipNodeBridge() || !isBridgeOn()) throw e;
+    if (!isBridgeOn()) throw e;
     return rpcViaBridge(method, params);
   }
 }
@@ -229,8 +225,6 @@ export function setUseHostProxy(on: boolean) {
 export async function hostProxyAvailable(): Promise<boolean> {
   if (!useHostProxyFlag) return false;
   if (typeof fetch === "undefined") return false;
-  const { nativeRpcAvailable } = await import("./native-http.ts");
-  if (nativeRpcAvailable()) return false;
   if (hostProxyMemo != null) return hostProxyMemo;
   try {
     const res = await fetch("/bitcoind-rpc", { method: "GET", cache: "no-store" });
@@ -330,8 +324,7 @@ const VALID_PROBE_DESC =
   "pkh(0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)";
 
 export async function probeNode(config: BitcoindConfig): Promise<NodeProbe> {
-  const { nativeRpcAvailable } = await import("./native-http.ts");
-  if (!nativeRpcAvailable() && typeof navigator !== "undefined" && navigator.permissions?.query) {
+  if (typeof navigator !== "undefined" && navigator.permissions?.query) {
     try {
       await navigator.permissions.query({ name: "local-network-access" as PermissionName });
     } catch {
@@ -463,37 +456,6 @@ export async function deriveAddressRange(
   return raw.map(String);
 }
 
-export async function probeElectrum(server: string): Promise<{ version: string; host: string; port: number }> {
-  const raw = server.trim();
-  if (!raw) throw new Error("hw.utxo.needElectrum");
-  const { nativeRpcAvailable, withDeadline } = await import("./native-http.ts");
-  if (nativeRpcAvailable()) {
-    const { nativeElectrumPing } = await import("./native-electrum.ts");
-    return nativeElectrumPing(raw);
-  }
-  const res = await withDeadline(
-    fetch("/electrum", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ ping: true, server: raw }),
-    }),
-    8000,
-    "hw.utxo.unreachable",
-  );
-  const body = (await res.json().catch(() => null)) as {
-    result?: { version?: string; host?: string; port?: number };
-    error?: { message?: string };
-  } | null;
-  if (body?.error?.message) throw new Error(body.error.message);
-  if (!res.ok || !body?.result) throw new Error(body?.error?.message || "hw.utxo.needElectrum");
-  return {
-    version: String(body.result.version || "server.version"),
-    host: String(body.result.host || raw),
-    port: Number(body.result.port) || 0,
-  };
-}
-
 async function electrumLookup(addresses: string[], server: string): Promise<UtxoScanResult> {
   const unique = [...new Set(addresses.filter(Boolean))];
   if (!server.trim()) throw new Error("hw.utxo.needElectrum");
@@ -502,32 +464,26 @@ async function electrumLookup(addresses: string[], server: string): Promise<Utxo
     const { nativeElectrumLookup } = await import("./native-electrum.ts");
     return nativeElectrumLookup(unique, server);
   }
-  try {
-    const res = await fetch("/electrum", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ addresses: unique, server }),
-    });
-    if (res.status !== 404) {
-      const body = (await res.json().catch(() => null)) as {
-        result?: { unspents?: UtxoScanResult["unspents"]; total?: number; height?: number };
-        error?: { message?: string };
-      } | null;
-      if (!body) throw new Error("hw.utxo.bad");
-      if (body.error?.message) throw new Error(body.error.message);
-      if (res.status >= 400) throw new Error(body.error?.message || "hw.utxo.needElectrum");
-      const unspents = Array.isArray(body.result?.unspents) ? body.result.unspents : [];
-      return {
-        height: Number(body.result?.height) || 0,
-        total: Number(body.result?.total) || 0,
-        unspents,
-      };
-    }
-  } catch (err) {
-    if (err instanceof Error && err.message.startsWith("hw.")) throw err;
-  }
-  throw new Error("hw.utxo.needElectrum");
+  const res = await fetch("/electrum", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ addresses: unique, server }),
+  });
+  if (res.status === 404) throw new Error("hw.utxo.needElectrum");
+  const body = (await res.json().catch(() => null)) as {
+    result?: { unspents?: UtxoScanResult["unspents"]; total?: number; height?: number };
+    error?: { message?: string };
+  } | null;
+  if (!body) throw new Error("hw.utxo.bad");
+  if (body.error?.message) throw new Error(body.error.message);
+  if (res.status >= 400) throw new Error(body.error?.message || "hw.utxo.needElectrum");
+  const unspents = Array.isArray(body.result?.unspents) ? body.result.unspents : [];
+  return {
+    height: Number(body.result?.height) || 0,
+    total: Number(body.result?.total) || 0,
+    unspents,
+  };
 }
 
 export async function scanDescriptorUtxos(
@@ -579,6 +535,37 @@ export async function scanWatchWallet(
   });
 }
 
+export async function probeElectrum(server: string, sniFallback?: string): Promise<{ version: string; host: string; port: number; cert?: string }> {
+  const raw = server.trim();
+  if (!raw) throw new Error("hw.utxo.needElectrum");
+  const { nativeRpcAvailable, withDeadline } = await import("./native-http.ts");
+  if (nativeRpcAvailable()) {
+    const { nativeElectrumPing } = await import("./native-electrum.ts");
+    return nativeElectrumPing(raw, sniFallback);
+  }
+  const res = await withDeadline(
+    fetch("/electrum", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ ping: true, server: raw }),
+    }),
+    8000,
+    "hw.utxo.unreachable",
+  );
+  const body = (await res.json().catch(() => null)) as {
+    result?: { version?: string; host?: string; port?: number };
+    error?: { message?: string };
+  } | null;
+  if (body?.error?.message) throw new Error(body.error.message);
+  if (!res.ok || !body?.result) throw new Error(body?.error?.message || "hw.utxo.needElectrum");
+  return {
+    version: String(body.result.version || "server.version"),
+    host: String(body.result.host || raw),
+    port: Number(body.result.port) || 0,
+  };
+}
+
 export async function fetchElectrumTip(server?: string): Promise<number> {
   const raw = (server ?? "").trim();
   if (!raw) throw new Error("hw.utxo.needElectrum");
@@ -587,26 +574,20 @@ export async function fetchElectrumTip(server?: string): Promise<number> {
     const { nativeElectrumTip } = await import("./native-electrum.ts");
     return nativeElectrumTip(raw);
   }
-  try {
-    const res = await fetch("/electrum", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ tip: true, server: raw }),
-    });
-    if (res.status !== 404) {
-      const body = (await res.json().catch(() => null)) as {
-        result?: { height?: number };
-        error?: { message?: string };
-      } | null;
-      if (body?.error?.message) throw new Error(body.error.message);
-      if (!res.ok) throw new Error(body?.error?.message || "hw.utxo.needElectrum");
-      const height = Number(body?.result?.height) || 0;
-      if (height <= 0) throw new Error("spend.err.tip");
-      return height;
-    }
-  } catch (err) {
-    if (err instanceof Error && (err.message.startsWith("hw.") || err.message.startsWith("spend."))) throw err;
-  }
-  throw new Error("hw.utxo.needElectrum");
+  const res = await fetch("/electrum", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ tip: true, server: server ?? "" }),
+  });
+  if (res.status === 404) throw new Error("hw.utxo.needElectrum");
+  const body = (await res.json().catch(() => null)) as {
+    result?: { height?: number };
+    error?: { message?: string };
+  } | null;
+  if (body?.error?.message) throw new Error(body.error.message);
+  if (!res.ok) throw new Error(body?.error?.message || "hw.utxo.needElectrum");
+  const height = Number(body?.result?.height) || 0;
+  if (height <= 0) throw new Error("spend.err.tip");
+  return height;
 }

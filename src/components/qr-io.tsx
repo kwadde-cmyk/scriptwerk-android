@@ -3,18 +3,8 @@ import QRCode from "qrcode";
 import jsQR from "jsqr";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Camera, ExternalLink, FileUp, ImageUp } from "lucide-react";
+import { Camera, FileUp, ImageUp } from "lucide-react";
 import { useT } from "@/lib/use-t";
-import {
-  cameraErrorKey,
-  ensureNativeCameraPermission,
-  isFramed,
-  isMobileUA,
-  isNativeCapacitor,
-  nativeCameraJpeg,
-  openDirectWindow,
-} from "@/lib/platform";
-import { toast } from "sonner";
 
 export function QrPreview({ value, label, compact }: { value: string; label: string; compact?: boolean }) {
   const { t } = useT();
@@ -90,76 +80,31 @@ export function QrPreview({ value, label, compact }: { value: string; label: str
   );
 }
 
-type QrDetector = { detect: (source: CanvasImageSource) => Promise<Array<{ rawValue?: string }>> };
-
-function nativeQrDetector(): QrDetector | null {
-  const Ctor = (globalThis as { BarcodeDetector?: new (opts: { formats: string[] }) => QrDetector })
-    .BarcodeDetector;
-  if (!Ctor) return null;
-  try {
-    return new Ctor({ formats: ["qr_code"] });
-  } catch {
-    return null;
-  }
-}
-
-async function openCameraStream(): Promise<MediaStream> {
-  const video = navigator.mediaDevices;
-  if (!video?.getUserMedia) throw new Error("qr.noCam");
-  const attempts: MediaStreamConstraints[] = [
-    { audio: false, video: { facingMode: { ideal: "environment" } } },
-    { audio: false, video: true },
-  ];
-  let last: unknown = null;
-  for (const constraints of attempts) {
-    try {
-      return await video.getUserMedia(constraints);
-    } catch (err) {
-      last = err;
-    }
-  }
-  throw last instanceof Error ? last : new Error("qr.noCam");
-}
-
-export function QrScanner({
-  onRead,
-  compact,
-  autoStart,
-}: {
-  onRead: (text: string) => void;
-  compact?: boolean;
-  autoStart?: boolean;
-}) {
+export function QrScanner({ onRead, compact }: { onRead: (text: string) => void; compact?: boolean }) {
   const { t } = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const snapRef = useRef<HTMLInputElement>(null);
-  const framed = isFramed();
-  const mobile = isMobileUA();
-  const native = isNativeCapacitor();
   const [camError, setCamError] = useState<string | null>(null);
-  const [active, setActive] = useState(() => Boolean(autoStart) && !framed);
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
     if (!active) return;
     let stream: MediaStream | null = null;
     let raf = 0;
     let stopped = false;
-    const detector = nativeQrDetector();
 
     async function start() {
       try {
-        if (isNativeCapacitor()) {
-          const ok = await ensureNativeCameraPermission();
-          if (!ok) throw new Error("permission denied");
-        }
-        stream = await openCameraStream();
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false,
+        });
         const video = videoRef.current;
         if (!video) return;
         video.srcObject = stream;
         await video.play();
-        const tick = async () => {
+        const tick = () => {
           if (stopped) return;
           const canvas = canvasRef.current;
           if (video && canvas && video.readyState >= 2) {
@@ -172,42 +117,23 @@ export function QrScanner({
             const ctx = canvas.getContext("2d", { willReadFrequently: true });
             if (ctx && w && h) {
               ctx.drawImage(video, 0, 0, w, h);
-              let text = "";
-              if (detector) {
-                try {
-                  const codes = await detector.detect(canvas);
-                  if (stopped) return;
-                  text = codes[0]?.rawValue ?? "";
-                } catch {
-                  text = "";
-                }
-              }
-              if (!text) {
-                const img = ctx.getImageData(0, 0, w, h);
-                const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
-                text = code?.data ?? "";
-              }
-              if (text) {
-                onRead(text);
+              const img = ctx.getImageData(0, 0, w, h);
+              const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+              if (code?.data) {
+                onRead(code.data);
                 stopped = true;
-                setActive(false);
                 return;
               }
             }
           }
           raf = window.setTimeout(() => {
-            raf = requestAnimationFrame(() => {
-              void tick();
-            });
+            raf = requestAnimationFrame(tick);
           }, 80);
         };
-        raf = requestAnimationFrame(() => {
-          void tick();
-        });
-      } catch (err) {
-        setCamError(t(cameraErrorKey(err, isFramed())));
+        raf = requestAnimationFrame(tick);
+      } catch {
+        setCamError(t("qr.noCam"));
         setActive(false);
-        if (isNativeCapacitor()) void snapNative();
       }
     }
 
@@ -219,13 +145,6 @@ export function QrScanner({
       stream?.getTracks().forEach((tr) => tr.stop());
     };
   }, [active, onRead, t]);
-
-  async function snapNative() {
-    const blob = await nativeCameraJpeg();
-    if (!blob) return;
-    const file = new File([blob], "capture.jpg", { type: blob.type || "image/jpeg" });
-    onFile(file);
-  }
 
   function onFile(file: File) {
     const url = URL.createObjectURL(file);
@@ -251,83 +170,28 @@ export function QrScanner({
     img.src = url;
   }
 
-  function toggleCam() {
-    if (active) {
-      setActive(false);
-      return;
-    }
-    if (framed) {
-      const win = openDirectWindow("scan");
-      if (!win) toast.error(t("hw.popupBlocked"));
-      return;
-    }
-    setCamError(null);
-    setActive(true);
-  }
-
   return (
     <div className="space-y-2">
-      {framed ? (
-        <p className="text-xs text-pretty text-warn">{t("qr.iframe")}</p>
-      ) : null}
       {active ? (
         <div className="overflow-hidden rounded-xl border border-border bg-ink">
           <video
             ref={videoRef}
-            className="aspect-video max-h-56 w-full object-cover"
+            className="aspect-video max-h-40 w-full object-cover"
             muted
             playsInline
-            autoPlay
           />
         </div>
       ) : null}
       <canvas ref={canvasRef} className="hidden" />
       {camError ? <p className="text-xs text-danger">{camError}</p> : null}
       <div className="flex flex-wrap gap-2">
-        {framed ? (
-          <Button
-            type="button"
-            onClick={() => {
-              const win = openDirectWindow("scan");
-              if (!win) toast.error(t("hw.popupBlocked"));
-            }}
-          >
-            <ExternalLink />
-            {t("qr.openTab")}
-          </Button>
-        ) : (
-          <Button type="button" variant={active ? "secondary" : "outline"} onClick={toggleCam}>
-            <Camera />
-            {active ? t("qr.camOff") : t("qr.cam")}
-          </Button>
-        )}
-        {mobile || native ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (native) void snapNative();
-              else snapRef.current?.click();
-            }}
-          >
-            <Camera /> {t("qr.snap")}
-          </Button>
-        ) : null}
+        <Button type="button" variant={active ? "secondary" : "outline"} onClick={() => setActive((v) => !v)}>
+          <Camera />
+          {active ? t("qr.camOff") : t("qr.cam")}
+        </Button>
         <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>
           <ImageUp /> {t("qr.image")}
         </Button>
-        <input
-          ref={snapRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) onFile(f);
-            e.target.value = "";
-          }}
-        />
         <input
           ref={fileRef}
           type="file"
@@ -347,9 +211,11 @@ export function QrScanner({
 export function FilePick({
   onRead,
   label,
+  accept,
 }: {
   onRead: (text: string) => void;
   label?: string;
+  accept?: string;
 }) {
   const { t } = useT();
   const ref = useRef<HTMLInputElement>(null);
@@ -359,7 +225,7 @@ export function FilePick({
       <input
         ref={ref}
         type="file"
-        accept=".txt,.json,.bsms,.desc,.miniscript,text/plain,application/json"
+        accept={accept ?? ".txt,.json,.jsonl,.bsms,.desc,.miniscript,text/plain,application/json"}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];

@@ -48,6 +48,15 @@ Output: `artifacts/Scriptwerk.apk`. Needs JDK 17 and Android SDK 34.
 
 Policy compiler, BIP-388, Bitcoin Core / Electrum: [kwadde-cmyk/scriptwerk-startos](https://github.com/kwadde-cmyk/scriptwerk-startos).
 
+**Android follows that web repo automatically.** UI, policy and wallet live in startos. This repo keeps native adapters (Capacitor HTTP, Electrum TLS, USB).
+
+- Hourly GitHub Action clones `scriptwerk-startos` `main`, copies `src/`, `public/`, `migrations/`, then re-applies the Android overlay.
+- Instant: GitHub → Actions → **Sync from web** → Run workflow.
+- Local: `npm run sync:web`
+
+`versionName` is the StartOS pin (`deploy/startos/package.json`). `versionCode` only increases when the web commit is new. The phone/Zapstore APK is still a separate signed build — this sync updates the code, not the store listing.
+
+Tracked web SHA: `.web-upstream`.
 ## Notice
 
 A tool to design and check policies. Not a wallet, not a mainnet signer without your own review. Verify descriptor and checksum on Bitcoin Core and on the device before coins sit on it.

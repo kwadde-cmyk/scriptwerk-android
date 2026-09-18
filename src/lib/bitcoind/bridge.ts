@@ -1,5 +1,4 @@
 import type { DiagReport } from "./diagnose.ts";
-import { skipNodeBridge } from "./native-http.ts";
 import { splitCookie } from "./rpc.ts";
 
 type Pending = {
@@ -15,7 +14,6 @@ let seq = 1;
 let lastHttp = "";
 
 export function corsBlocked(report: DiagReport): boolean {
-  if (skipNodeBridge()) return false;
   const reachOk = report.steps.some((s) => s.id === "reach" && s.status === "ok");
   const rpcFail = report.steps.some((s) => s.id === "rpc" && s.status === "fail");
   const corsFail = report.steps.some(

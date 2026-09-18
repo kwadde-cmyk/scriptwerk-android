@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { compileBip388 } from "@/lib/miniscript/bip388";
-import { compileDescriptorCached } from "@/lib/miniscript/compile";
+import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import {
   allRequestedMatch,
   chainMatches,
@@ -12,7 +12,7 @@ import {
   type AddressKind,
 } from "@/lib/hw/address-check";
 import { deriveAddressRange } from "@/lib/bitcoind/rpc";
-import { defaultAccountPath, detectHid, bitboxUsbAvailable, ledgerUsbAvailable, type HwKind } from "@/lib/hw";
+import { defaultAccountPath, detectHid, type HwKind } from "@/lib/hw";
 import { useHardware } from "@/store/hardware";
 import { useStudio } from "@/store/studio";
 import { useBitcoind } from "@/store/bitcoind";
@@ -31,9 +31,8 @@ import { useT } from "@/lib/use-t";
 import { localizeMessage } from "@/lib/i18n";
 import { CopyButton, Copyable } from "@/components/copy-button";
 import { UtxoScanPanel } from "@/components/utxo-scan";
-import { Usb, ExternalLink } from "lucide-react";
+import { Usb } from "lucide-react";
 import { toast } from "sonner";
-import { isAndroidUA, isFramed, isNativeCapacitor, openDirectWindow } from "@/lib/platform";
 
 export function HardwareButton() {
   const { t } = useT();
@@ -79,6 +78,7 @@ function HardwareDialogBody() {
   const keys = useStudio((s) => s.keys);
   const root = useStudio((s) => s.root);
   const reuseKeys = useStudio((s) => s.reuseKeys);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const dialogOpen = useHardware((s) => s.open);
   const session = useHardware((s) => s.session);
   const [path, setPath] = useState(defaultAccountPath());
@@ -87,21 +87,11 @@ function HardwareDialogBody() {
 
   const pending = keys.find((k) => k.id === pendingKeyId) ?? null;
   const bip = useMemo(
-    () => (dialogOpen && root ? compileBip388(root, keys, walletName, reuseKeys) : null),
-    [dialogOpen, root, keys, reuseKeys, walletName],
+    () => (!frozen && dialogOpen && root ? compileBip388(root, keys, walletName, reuseKeys) : null),
+    [frozen, dialogOpen, root, keys, reuseKeys, walletName],
   );
   const ready = Boolean(session);
   const errText = error ? localizeMessage(locale, error) : null;
-  const android = isAndroidUA();
-  const framed = isFramed();
-  const native = isNativeCapacitor();
-  const ledgerUsb = ledgerUsbAvailable(hid);
-  const bitboxUsb = bitboxUsbAvailable(hid);
-
-  function openOwnWindow() {
-    const win = openDirectWindow("usb");
-    if (!win) toast.error(t("hw.popupBlocked"));
-  }
 
   async function run(fn: () => Promise<void>) {
     setBusyAction("1");
@@ -122,35 +112,21 @@ function HardwareDialogBody() {
         <DialogDescription>{t("hw.blurb")}</DialogDescription>
       </DialogHeader>
 
-      {framed ? (
-        <div className="space-y-2 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5">
-          <p className="text-xs text-pretty text-warn">{t("hw.iframe")}</p>
-          <Button size="sm" onClick={openOwnWindow}>
-            <ExternalLink /> {t("hw.openTab")}
-          </Button>
-        </div>
-      ) : null}
-      {native ? <p className="text-xs text-pretty text-fg-muted">{t("hw.nativeUsb")}</p> : null}
-      {android && !framed && !native ? <p className="text-xs text-pretty text-fg-muted">{t("hw.android")}</p> : null}
-      {!framed && !native && hid === "missing" ? <p className="text-xs text-warn">{t("hw.needChrome")}</p> : null}
+      {hid === "missing" ? <p className="text-xs text-warn">{t("hw.needChrome")}</p> : null}
+      {hid === "iframe" ? <p className="text-xs text-warn">{t("hw.iframe")}</p> : null}
 
       {!ready ? (
         <div className="grid gap-2 sm:grid-cols-2">
           <DeviceCard
             title={t("export.ledger")}
-            hint={android ? t("hw.ledgerAndroid") : t("hw.ledgerHint")}
-            hideUsb={framed || !ledgerUsb}
+            hint={t("hw.ledgerHint")}
             disabled={status === "picking" || status === "connecting" || status === "pairing"}
-            onUsb={() => {
-              if (framed) {
-                openOwnWindow();
-                return;
-              }
+            onUsb={() =>
               run(async () => {
                 await connect("ledger", false);
                 toast.success(t("hw.connected"));
-              });
-            }}
+              })
+            }
             onDemo={() =>
               run(async () => {
                 await connect("ledger", true);
@@ -160,19 +136,14 @@ function HardwareDialogBody() {
           />
           <DeviceCard
             title={t("export.bitbox")}
-            hint={android ? t("hw.bitboxAndroid") : t("hw.bitboxHint")}
-            hideUsb={framed || !bitboxUsb}
+            hint={t("hw.bitboxHint")}
             disabled={status === "picking" || status === "connecting" || status === "pairing"}
-            onUsb={() => {
-              if (framed) {
-                openOwnWindow();
-                return;
-              }
+            onUsb={() =>
               run(async () => {
                 await connect("bitbox", false);
                 toast.success(t("hw.connected"));
-              });
-            }}
+              })
+            }
             onDemo={() =>
               run(async () => {
                 await connect("bitbox", true);
@@ -250,9 +221,13 @@ function HardwareDialogBody() {
             <Button
               size="sm"
               variant="outline"
-              disabled={Boolean(busyAction) || !bip?.ok}
+              disabled={Boolean(busyAction) || frozen || !bip?.ok}
               onClick={() =>
                 run(async () => {
+                  if (frozen) {
+                    toast.error(t("hw.frozen"));
+                    return;
+                  }
                   if (!bip?.ok) {
                     toast.error(bip?.error ?? t("export.none"));
                     return;
@@ -277,12 +252,17 @@ function HardwareDialogBody() {
           ) : kind === "bitbox" ? (
             <p className="text-2xs text-fg-subtle">{t("hw.bitboxStored")}</p>
           ) : null}
+          {frozen ? (
+            <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-2xs text-pretty text-warn">
+              {t("hw.frozen")}
+            </p>
+          ) : null}
           {kind === "ledger" ? (
             <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-2xs text-pretty text-warn">
               {t("hw.verifyNotice")}
             </p>
           ) : null}
-          {bip?.ok ? (
+          {bip?.ok && !frozen ? (
             <AddressCheckPanel
               policyOk={bip.ok}
               walletName={walletName}
@@ -328,10 +308,7 @@ function AddressCheckPanel({
     () => (root ? compileBip388(root, keys, walletName, reuseKeys) : null),
     [root, keys, walletName, reuseKeys],
   );
-  const compiled = useMemo(
-    () => (root ? compileDescriptorCached(root, keys, reuseKeys) : null),
-    [root, keys, reuseKeys],
-  );
+  const compiled = useStudio(compiledForStudio);
 
   async function run() {
     if (!bip?.ok || !compiled?.ok) {
@@ -577,14 +554,12 @@ function DeviceCard({
   title,
   hint,
   disabled,
-  hideUsb,
   onUsb,
   onDemo,
 }: {
   title: string;
   hint: string;
   disabled: boolean;
-  hideUsb?: boolean;
   onUsb: () => void;
   onDemo: () => void;
 }) {
@@ -593,11 +568,9 @@ function DeviceCard({
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3">
       <p className="text-sm text-fg">{title}</p>
       <p className="text-2xs text-pretty text-fg-muted">{hint}</p>
-      {hideUsb ? null : (
-        <Button size="sm" disabled={disabled} onClick={onUsb}>
-          <Usb /> {t("hw.connectUsb")}
-        </Button>
-      )}
+      <Button size="sm" disabled={disabled} onClick={onUsb}>
+        <Usb /> {t("hw.connectUsb")}
+      </Button>
       <Button size="sm" variant="ghost" disabled={disabled} onClick={onDemo}>
         {t("hw.connectDemo")}
       </Button>
@@ -616,12 +589,6 @@ export function useHwFillKey(keyId: string, onOrigin?: (origin: string) => void)
 
   return async (kind: HwKind, path?: string) => {
     setPendingKey(keyId);
-    if (isFramed()) {
-      const win = openDirectWindow("usb");
-      if (!win) toast.error(t("hw.popupBlocked"));
-      else setOpen(false);
-      return;
-    }
     if (status === "ready" && sessionKind === kind) {
       try {
         if (onOrigin) {

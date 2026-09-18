@@ -1,17 +1,8 @@
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
 import { ledgerPolicyReady } from "@/lib/miniscript/bip388";
-import { isNativeCapacitor } from "@/lib/platform";
 import { alignLedgerOrigin, isHmacHex, policyCacheKey } from "./address-check.ts";
+import { formatOrigin, hwErrorMessage, normalizeHwPath, pathToDerivation, type HwSession } from "./types.ts";
 import { installNativeUsbPolyfill } from "./native-usb.ts";
-import {
-  detectHid,
-  formatOrigin,
-  hwErrorMessage,
-  normalizeHwPath,
-  pathToDerivation,
-  pickLedgerTransport,
-  type HwSession,
-} from "./types.ts";
 
 async function ensureBuffer() {
   const g = globalThis as unknown as { Buffer?: unknown };
@@ -26,32 +17,12 @@ function isFileNotFound(err: unknown): boolean {
   return /0x6a82|FILE_NOT_FOUND/i.test(msg) || code === 0x6a82;
 }
 
-async function openLedgerTransport() {
+export async function openLedgerSession(): Promise<HwSession> {
   await ensureBuffer();
   await installNativeUsbPolyfill();
-  const kind = pickLedgerTransport(detectHid());
-  if (kind === "iframe") throw new Error("hw.err.iframe");
-  if (kind === "none") throw new Error("hw.err.usb");
-  if (isNativeCapacitor()) {
-    try {
-      const { default: TransportWebUSB } = await import("@ledgerhq/hw-transport-webusb");
-      return await TransportWebUSB.create();
-    } catch {
-      const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");
-      return await TransportWebHID.create();
-    }
-  }
-  if (kind === "hid") {
-    const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");
-    return await TransportWebHID.create();
-  }
-  const { default: TransportWebUSB } = await import("@ledgerhq/hw-transport-webusb");
-  return await TransportWebUSB.create();
-}
-
-export async function openLedgerSession(): Promise<HwSession> {
-  const transport = await openLedgerTransport();
+  const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");
   const { AppClient, WalletPolicy } = await import("ledger-bitcoin");
+  const transport = await TransportWebHID.create();
   const app = new AppClient(transport);
   let info: { name: string; version: string } | null = null;
   try {

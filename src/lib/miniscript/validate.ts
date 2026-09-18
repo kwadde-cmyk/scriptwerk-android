@@ -39,6 +39,12 @@ export function validatePolicy(root: MsNode | null, locale: Locale = "de"): Issu
         });
       }
     }
+    if (n.kind === "unknown") {
+      issues.push({
+        level: "info",
+        message: t(locale, "val.unknown", { name: n.name }),
+      });
+    }
     if (n.kind === "and_v") {
       if (!isVerifyish(n.left)) {
         issues.push({

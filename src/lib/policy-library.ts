@@ -1,6 +1,7 @@
 import type { MsNode } from "./miniscript/ast.ts";
 import type { KeyEntry } from "./miniscript/keys.ts";
 import type { MaxOlder, Nesting, Stage } from "./miniscript/stages.ts";
+import type { PolicyMode } from "./miniscript/policy-mode.ts";
 import { uid } from "./utils.ts";
 
 export const POLICY_LIBRARY_KEY = "scriptwerk-policies-v1";
@@ -16,6 +17,9 @@ export type PolicySnapshot = {
   mode: "easy" | "expert";
   maxOlder: MaxOlder;
   policyName: string;
+  policyMode?: PolicyMode;
+  originalDescriptor?: string;
+  liftWarning?: string;
 };
 
 export type SavedPolicy = {

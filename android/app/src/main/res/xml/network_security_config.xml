@@ -1,9 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- HTTPS everywhere by default. Cleartext only for localhost + *.local (StartOS mDNS).
+     Raw LAN IPs (http://192.168.…) are blocked — use https:// or http://host.local. -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
     </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">local</domain>
+        <domain>127.0.0.1</domain>
+    </domain-config>
 </network-security-config>

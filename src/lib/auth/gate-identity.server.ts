@@ -4,16 +4,11 @@ import {
   type JWK,
   type JWTVerifyGetKey,
 } from "jose";
-import { env, isWorkspacePreview } from "../env.server.ts";
 
 export const GATE_IDENTITY_HEADER = "x-grok-identity";
 export const GATE_JWKS_PATH = "/__gate/identity-key";
 
 const JWKS_CACHE_TTL_MS = 300_000;
-const PREVIEW_AUDIENCE = "preview";
-export const PREVIEW_GATE_ORIGIN = "http://127.0.0.1:6014";
-const FALLBACK_EMAIL_DOMAIN = "viewer.grok.invalid";
-const FALLBACK_NAME = "Grok user";
 
 export type GateIdentity = {
   sub: string;
@@ -26,13 +21,13 @@ export type GateJwks = { keys: JWK[] };
 
 export type JwksFetch = (url: string) => Promise<GateJwks | null>;
 
-export function gateIdentityEnabled(): boolean {
-  return env("VITE_AUTH_ENABLED") !== "false";
+function env(key: string): string | undefined {
+  const v = process.env[key]?.trim();
+  return v || undefined;
 }
 
-export function gateTokenAudience(): string {
-  if (isWorkspacePreview()) return PREVIEW_AUDIENCE;
-  return `app:${env("GROK_PROJECT_ID")}`;
+export function gateIdentityEnabled(): boolean {
+  return env("VITE_AUTH_ENABLED") !== "false" && Boolean(env("GROK_PROJECT_ID"));
 }
 
 async function defaultJwksFetch(url: string): Promise<GateJwks | null> {
@@ -129,13 +124,6 @@ export function resolveGateEndpoints(headers: Headers): GateEndpoints | null {
     return { issuer: origin, jwksUrl: `${origin}${GATE_JWKS_PATH}` };
   }
 
-  if (isWorkspacePreview()) {
-    return {
-      issuer: PREVIEW_GATE_ORIGIN,
-      jwksUrl: `${PREVIEW_GATE_ORIGIN}${GATE_JWKS_PATH}`,
-    };
-  }
-
   const xf = headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   const host = (xf || headers.get("host") || "")
     .split(":")[0]
@@ -178,29 +166,13 @@ export async function gateIdentityFromHeaders(
   if (!gateIdentityEnabled()) return null;
   const token = headers.get(GATE_IDENTITY_HEADER)?.trim();
   if (!token) return null;
+  const projectId = env("GROK_PROJECT_ID");
+  if (!projectId) return null;
   const endpoints = resolveGateEndpoints(headers);
   if (!endpoints) return null;
   return verifyGateIdentityToken(token, {
     issuer: endpoints.issuer,
-    audience: gateTokenAudience(),
+    audience: `app:${projectId}`,
     getKey: gateKeyResolver(endpoints.jwksUrl, jwksFetch),
   });
-}
-
-export type GateUserInfo = {
-  id: string;
-  email: string;
-  emailVerified: boolean;
-  name: string;
-};
-
-export function gateIdentityUserInfo(identity: GateIdentity): GateUserInfo {
-  return {
-    id: identity.sub,
-    email: (
-      identity.email ?? `${identity.sub}@${FALLBACK_EMAIL_DOMAIN}`
-    ).toLowerCase(),
-    emailVerified: Boolean(identity.email),
-    name: identity.name ?? FALLBACK_NAME,
-  };
 }

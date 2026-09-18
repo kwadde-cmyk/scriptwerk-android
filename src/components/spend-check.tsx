@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { keyHeadline } from "@/lib/miniscript/keys";
 import { coinHeightFromConfirms, evaluateSpendPaths } from "@/lib/miniscript/spend-check";
+import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { formatAmount } from "@/lib/hw/address-check";
 import { fetchElectrumTip } from "@/lib/bitcoind/rpc";
 import { useBitcoind } from "@/store/bitcoind";
@@ -20,6 +21,7 @@ export function SpendCheckCard() {
   const keys = useStudio((s) => s.keys);
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const selectStage = useStudio((s) => s.selectStage);
   const selectedStageId = useStudio((s) => s.selectedStageId);
   const probe = useBitcoind((s) => s.probe);
@@ -70,8 +72,7 @@ export function SpendCheckCard() {
     setBusy(true);
     setTipError(null);
     try {
-      const st = useBitcoind.getState();
-      const height = await fetchElectrumTip(st.electrum);
+      const height = await fetchElectrumTip(useBitcoind.getState().electrum);
       setTip(height);
       setTipSource("electrum");
     } catch (e) {
@@ -89,7 +90,7 @@ export function SpendCheckCard() {
   return (
     <section className="space-y-3">
       <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("spend.title")}</h2>
-      <p className="text-2xs text-pretty text-fg-muted">{t("spend.blurb")}</p>
+      <p className="text-2xs text-pretty text-fg-muted">{frozen ? t("spend.frozen") : t("spend.blurb")}</p>
 
       <div>
         <Label>{t("spend.have")}</Label>

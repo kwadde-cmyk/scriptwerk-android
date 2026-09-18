@@ -1,15 +1,8 @@
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
 import { ledgerPolicyReady } from "@/lib/miniscript/bip388";
 import { bitboxAddressPath } from "./address-check.ts";
+import { formatOrigin, hwErrorMessage, normalizeHwPath, pathToDerivation, type HwSession } from "./types.ts";
 import { installNativeUsbPolyfill } from "./native-usb.ts";
-import {
-  detectHid,
-  formatOrigin,
-  hwErrorMessage,
-  normalizeHwPath,
-  pathToDerivation,
-  type HwSession,
-} from "./types.ts";
 
 type BitboxMod = typeof import("bitbox-api");
 type Paired = InstanceType<BitboxMod["PairedBitBox"]>;
@@ -48,9 +41,6 @@ export async function openBitBoxSession(
   onClose: () => void,
 ): Promise<HwSession> {
   await installNativeUsbPolyfill();
-  const access = detectHid();
-  if (access === "iframe") throw new Error("hw.err.iframe");
-  if (access !== "ok") throw new Error("hw.err.bitboxHid");
   const bitbox: BitboxMod = await import("bitbox-api");
   const unpaired = await bitbox.bitbox02ConnectWebHID(onClose);
   const pairing = await unpaired.unlockAndPair();

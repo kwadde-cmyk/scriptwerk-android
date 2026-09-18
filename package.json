@@ -1,5 +1,6 @@
 {
   "name": "app-builder-workspace",
+  "version": "0.1.0",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -14,23 +15,21 @@
     "preview": "node scripts/with-app-env.mjs vite preview",
     "preview:restart": "node scripts/preview.mjs restart",
     "preview:stop": "node scripts/preview.mjs stop",
+    "build:host": "NITRO_PRESET=node-server node scripts/with-app-env.mjs vite build && npm run db:migrate",
+    "start": "node scripts/host.mjs",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/platform.test.ts src/lib/hw/usb-polyfill.test.ts src/lib/bitcoind/esplora.test.ts src/lib/bitcoind/bitcoind.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/auth/gate-identity.test.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "build:apk-web": "node scripts/with-app-env.mjs npx vite build --config vite.apk.config.ts",
-    "build:apk": "node scripts/build-apk.mjs"
+    "build:apk": "node scripts/build-apk.mjs",
+    "sync:web": "node scripts/sync-from-web.mjs"
   },
   "dependencies": {
-    "@capacitor/app": "^6.0.3",
-    "@capacitor/camera": "^6.1.3",
-    "@capacitor/core": "^6.2.2",
-    "@capacitor/status-bar": "^6.0.3",
     "@electric-sql/pglite": "^0.5.4",
     "@hookform/resolvers": "^5.7.0",
     "@ledgerhq/hw-transport-webhid": "^6.36.0",
-    "@ledgerhq/hw-transport-webusb": "^6.35.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -84,11 +83,13 @@
     "tw-animate-css": "^1.3.4",
     "vaul": "^1.1.2",
     "zod": "^4.4.0",
-    "zustand": "^5.0.0"
+    "zustand": "^5.0.0",
+    "@capacitor/app": "^6.0.3",
+    "@capacitor/camera": "^6.1.3",
+    "@capacitor/core": "^6.2.2",
+    "@capacitor/status-bar": "^6.0.3"
   },
   "devDependencies": {
-    "@capacitor/android": "^6.2.2",
-    "@capacitor/cli": "^6.2.2",
     "@eslint/js": "^9.20.0",
     "@types/node": "^22.16.5",
     "@types/pg": "^8.11.10",
@@ -108,6 +109,8 @@
     "prettier": "^3.4.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/cli": "^6.2.2"
   }
 }

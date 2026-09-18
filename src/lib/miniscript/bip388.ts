@@ -597,6 +597,9 @@ export function formatScriptwerkJson(opts: {
   keys: KeyEntry[];
   reuseKeys: boolean;
   network: "mainnet";
+  policyMode?: string;
+  originalDescriptor?: string;
+  liftWarning?: string;
 }): string {
   return `${JSON.stringify(
     {
@@ -607,6 +610,9 @@ export function formatScriptwerkJson(opts: {
       descriptor: opts.descriptor,
       reuseKeys: opts.reuseKeys,
       network: opts.network,
+      policyMode: opts.policyMode || "stages",
+      originalDescriptor: opts.originalDescriptor || "",
+      liftWarning: opts.liftWarning || "",
       keys: opts.keys.map((k) => ({
         name: k.name,
         label: k.note,
@@ -636,6 +642,9 @@ export function parseScriptwerkBundle(text: string): {
   keys: KeyEntry[];
   reuseKeys?: boolean;
   network?: "mainnet";
+  policyMode?: string;
+  originalDescriptor?: string;
+  liftWarning?: string;
 } | null {
   let parsed: unknown;
   try {
@@ -690,5 +699,8 @@ export function parseScriptwerkBundle(text: string): {
     keys,
     reuseKeys: typeof rec.reuseKeys === "boolean" ? rec.reuseKeys : undefined,
     network: "mainnet",
+    policyMode: firstString(rec, ["policyMode"]) || undefined,
+    originalDescriptor: firstString(rec, ["originalDescriptor"]) || undefined,
+    liftWarning: firstString(rec, ["liftWarning"]) || undefined,
   };
 }

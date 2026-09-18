@@ -13,6 +13,10 @@ screenshots/
 .project_id
 .node_modules.lock
 local.properties
+*.jks
+*.keystore
+*.p12
+keystore.properties
 .DS_Store
 *.log
 coverage/

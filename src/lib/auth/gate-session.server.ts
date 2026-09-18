@@ -10,10 +10,8 @@ import {
   GATE_IDENTITY_HEADER,
   gateIdentityEnabled,
   gateIdentityFromHeaders,
-  gateIdentityUserInfo,
   sessionBoundToGateIdentity,
 } from "./gate-identity.server";
-import { GATE_SESSION_MARKER_COOKIE } from "./gate-session-marker";
 
 export const GATE_PROVIDER_ID = "grok-gate";
 const GATE_ACCOUNT_ISSUER = "https://grok.com";
@@ -135,61 +133,6 @@ async function expireSessionDataCookie(
   }
 }
 
-/**
- * Write or clear the client-readable gate-session marker
- * (`gate-session-marker.ts`), through the same dual-path delivery as
- * `emitSessionCookie`. Not HttpOnly by design: `UserButton` reads it to hide
- * sign-out for gate sessions (signing out would re-materialize instantly).
- */
-async function writeGateMarkerCookie(
-  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
-  clear: boolean,
-): Promise<void> {
-  const sessionMaxAge = ctx.context.sessionConfig.expiresIn;
-  const maxAge = clear
-    ? 0
-    : typeof sessionMaxAge === "number"
-      ? sessionMaxAge
-      : undefined;
-  const value = clear ? "" : "1";
-  try {
-    const { setCookie } = await import("@tanstack/react-start/server");
-    setCookie(GATE_SESSION_MARKER_COOKIE, value, {
-      path: "/",
-      httpOnly: false,
-      secure: true,
-      sameSite: "lax",
-      maxAge,
-    });
-  } catch (err) {
-    console.error(`${LOG} TanStack setCookie (gate marker) failed`, err);
-  }
-  try {
-    ctx.context.responseHeaders?.append(
-      "set-cookie",
-      `${GATE_SESSION_MARKER_COOKIE}=${value}; Path=/; Secure; SameSite=Lax` +
-        (maxAge === undefined ? "" : `; Max-Age=${maxAge}`),
-    );
-  } catch (err) {
-    console.error(`${LOG} responseHeaders.append (gate marker) failed`, err);
-  }
-}
-
-/**
- * Clear a stale marker when a `/get-session` arrives without `x-grok-identity`:
- * the browser is no longer behind a gate viewer (returned anonymously, or the
- * session is a broker one), so sign-out must not stay hidden. Emits the
- * Max-Age=0 clear only when the marker is actually on the request.
- */
-async function clearGateMarkerIfPresent(
-  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
-  inbound: Headers,
-): Promise<void> {
-  const cookieHeader = inbound.get("cookie") ?? "";
-  if (!cookieHeader.includes(`${GATE_SESSION_MARKER_COOKIE}=`)) return;
-  await writeGateMarkerCookie(ctx, true);
-}
-
 /** Drop a cookie from the request `Cookie` header (inverse of `setRequestCookie`). */
 function removeRequestCookie(headers: Headers, name: string): void {
   const cookieHeader = headers.get("cookie");
@@ -221,10 +164,7 @@ export function gateIdentitySessions() {
             }
             // Bearer auth (live-preview popup) already carries a session — leave it alone.
             if (inbound.get("authorization")) return;
-            if (!inbound.get(GATE_IDENTITY_HEADER)) {
-              await clearGateMarkerIfPresent(ctx, inbound);
-              return;
-            }
+            if (!inbound.get(GATE_IDENTITY_HEADER)) return;
 
             const identity = await gateIdentityFromHeaders(inbound);
             if (!identity) {
@@ -262,7 +202,7 @@ export function gateIdentitySessions() {
                     GATE_PROVIDER_ID,
                   )
                 ) {
-                  await writeGateMarkerCookie(ctx, false);
+                  // Already signed in as this gate identity — nothing to do.
                   return;
                 }
                 await ctx.context.internalAdapter
@@ -279,7 +219,14 @@ export function gateIdentitySessions() {
 
             try {
               const result = await handleOAuthUserInfo(ctx, {
-                userInfo: gateIdentityUserInfo(identity),
+                userInfo: {
+                  id: identity.sub,
+                  email: (
+                    identity.email ?? `${identity.sub}@viewer.grok.invalid`
+                  ).toLowerCase(),
+                  emailVerified: Boolean(identity.email),
+                  name: identity.name ?? "Grok user",
+                },
                 account: {
                   providerId: GATE_PROVIDER_ID,
                   issuer: GATE_ACCOUNT_ISSUER,
@@ -313,8 +260,6 @@ export function gateIdentitySessions() {
                 );
                 return;
               }
-
-              await writeGateMarkerCookie(ctx, false);
 
               const sessionDataCookie = ctx.context.authCookies.sessionData;
               await expireSessionDataCookie(ctx, sessionDataCookie);

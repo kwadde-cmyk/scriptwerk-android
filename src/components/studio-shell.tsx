@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronsLeft, ChevronsRight, FileCode2, GitFork, KeyRound, Layers, SlidersHorizontal } from "lucide-react";
+import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { InterpreterPanel } from "@/components/interpreter-panel";
 import { ImportExportBar } from "@/components/import-export";
 import { KeyDatalist, OperatorPalette } from "@/components/operator-palette";
@@ -10,21 +10,16 @@ import { StageBuilder, ExpertPolicySettings } from "@/components/stage-builder";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { defaultStages } from "@/lib/miniscript/stages";
+import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
 import { useT } from "@/lib/use-t";
 import { RecoveryPrintRoot } from "@/components/recovery-sheet";
 import { NodeAutoSync } from "@/components/node-rpc";
-import { AndroidInstallBanner } from "@/components/android-chrome";
-import { installNativeUsbPolyfill } from "@/lib/hw/native-usb";
 import { Toaster } from "sonner";
 import type { Locale } from "@/lib/i18n";
 
 export function StudioShell() {
   const { t, locale, setLocale } = useT();
-
-  useEffect(() => {
-    void installNativeUsbPolyfill();
-  }, []);
 
   useEffect(() => {
     const unlock = () => {
@@ -39,6 +34,10 @@ export function StudioShell() {
   useEffect(() => {
     void Promise.resolve(useStudio.persist.rehydrate()).then(() => {
       const s = useStudio.getState();
+      if (policyIsFrozen(s.policyMode) && s.originalDescriptor) {
+        useStudio.setState({ past: [], future: [] });
+        return;
+      }
       if (s.root) {
         useStudio.setState({ past: [], future: [] });
         return;
@@ -79,15 +78,50 @@ export function StudioShell() {
       <NodeAutoSync />
       <Toaster theme="dark" position="bottom-center" />
       <div className="no-print flex h-dvh w-full min-w-0 flex-col overflow-hidden bg-bg text-fg">
-        <div data-layout="desktop" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <DesktopHeader locale={locale} setLocale={setLocale} languageLabel={t("header.language")} />
-          <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden">
-            <DesktopStudio />
+        <header className="relative z-30 shrink-0 border-b border-border bg-[#0b0c0e]" style={{ touchAction: "manipulation" }}>
+          <div className="relative h-20 w-full overflow-hidden sm:h-24 lg:h-[7.25rem]">
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-[6.75rem] overflow-hidden sm:w-36 lg:w-[11.5rem]">
+              <img
+                src="/miniscript-banner.jpg?v=5"
+                alt=""
+                className="h-full w-auto max-w-none object-cover object-left"
+              />
+            </div>
+            <div className="absolute top-1.5 right-3 z-10 text-right sm:top-2 lg:top-2 lg:right-4">
+              <p className="font-display text-[1.2rem] font-semibold tracking-[0.2em] text-fg sm:text-2xl lg:text-[1.95rem] lg:tracking-[0.24em]">
+                SCRIPTWERK
+              </p>
+              <p className="mt-0.5 text-[0.55rem] font-medium tracking-[0.3em] text-fg-muted uppercase sm:text-[0.65rem] lg:text-[0.72rem] lg:tracking-[0.36em]">
+                Miniscript Studio
+              </p>
+            </div>
+            <div className="absolute right-3 bottom-2 z-20 hidden lg:flex flex-wrap items-center justify-end gap-2">
+              <ImportExportBar />
+              <ModeSwitch />
+              <LangSwitch locale={locale} setLocale={setLocale} label={t("header.language")} />
+            </div>
           </div>
-        </div>
-        <div data-layout="mobile" className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden">
-          <AndroidStudio locale={locale} setLocale={setLocale} />
-        </div>
+          <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 lg:hidden">
+            <ImportExportBar />
+            <ModeSwitch />
+            <LangSwitch locale={locale} setLocale={setLocale} label={t("header.language")} />
+          </div>
+          <h1 className="sr-only">Scriptwerk — Miniscript Studio</h1>
+        </header>
+
+        <MountWhenVisible
+          dataLayout="desktop"
+          className="hidden min-h-0 w-full min-w-0 flex-1 overflow-hidden lg:flex"
+        >
+          <DesktopStudio />
+        </MountWhenVisible>
+
+        <MountWhenVisible
+          dataLayout="mobile"
+          className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden lg:hidden"
+        >
+          <MobileStudioTabs />
+        </MountWhenVisible>
       </div>
       <RecoveryPrintRoot />
     </TooltipProvider>
@@ -307,53 +341,11 @@ function DesktopStudio() {
   );
 }
 
-function DesktopHeader({
-  locale,
-  setLocale,
-  languageLabel,
-}: {
-  locale: Locale;
-  setLocale: (l: Locale) => void;
-  languageLabel: string;
-}) {
-  return (
-    <header className="relative z-30 shrink-0 border-b border-border bg-ink" style={{ touchAction: "manipulation" }}>
-      <div className="relative h-[7.25rem] w-full overflow-hidden">
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-[11.5rem] overflow-hidden">
-          <img
-            src="/miniscript-banner.jpg?v=5"
-            alt=""
-            className="h-full w-auto max-w-none object-cover object-left"
-          />
-        </div>
-        <div className="absolute top-2 right-4 z-10 text-right">
-          <p className="font-display text-[1.95rem] font-semibold tracking-[0.24em] text-fg">SCRIPTWERK</p>
-          <p className="mt-0.5 text-[0.72rem] font-medium tracking-[0.36em] text-fg-muted uppercase">
-            Miniscript Studio
-          </p>
-        </div>
-        <div className="absolute right-4 bottom-2 z-20 flex flex-wrap items-center justify-end gap-2">
-          <ImportExportBar />
-          <ModeSwitch />
-          <LangSwitch locale={locale} setLocale={setLocale} label={languageLabel} />
-        </div>
-      </div>
-      <h1 className="sr-only">Scriptwerk — Miniscript Studio</h1>
-    </header>
-  );
-}
-
-function AndroidStudio({
-  locale,
-  setLocale,
-}: {
-  locale: Locale;
-  setLocale: (l: Locale) => void;
-}) {
+function MobileStudioTabs() {
   const { t } = useT();
   const expert = useStudio((s) => s.mode) === "expert";
   const selectedStageId = useStudio((s) => s.selectedStageId);
-  const [tab, setTab] = useState("stages");
+  const [tab, setTab] = useState("tree");
   const prevStage = useRef<string | null>(null);
 
   useEffect(() => {
@@ -362,106 +354,81 @@ function AndroidStudio({
   }, [selectedStageId]);
 
   useEffect(() => {
-    if (!expert && tab === "ops") setTab("stages");
+    if (!expert && tab === "ops") setTab("tree");
   }, [expert, tab]);
 
-  const items = [
-    { id: "stages", label: t("tabs.stages"), icon: Layers },
-    { id: "tree", label: t("tabs.tree"), icon: GitFork },
-    { id: "keys", label: t("tabs.keys"), icon: KeyRound },
-    ...(expert ? [{ id: "ops", label: t("tabs.expert"), icon: SlidersHorizontal }] : []),
-    { id: "read", label: t("tabs.read"), icon: FileCode2 },
-  ];
-
   return (
-    <div className="flex h-full w-full min-w-0 flex-col bg-bg">
-      <header
-        className="shrink-0 border-b border-border bg-ink"
-        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
-      >
-        <div className="flex items-center gap-2 px-3 pb-1.5">
-          <img src="/favicon.svg" alt="" className="size-8 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <p className="font-display text-[0.95rem] font-semibold tracking-[0.18em] text-fg">SCRIPTWERK</p>
-            <p className="text-[0.58rem] font-medium tracking-[0.22em] text-fg-muted uppercase">
-              {t("android.subtitle")}
-            </p>
-          </div>
-          <LangSwitch locale={locale} setLocale={setLocale} label={t("header.language")} />
-        </div>
-        <div className="android-actions overflow-x-auto px-3 pb-2">
-          <div className="flex items-center gap-1.5">
-            <ModeSwitch />
-            <ImportExportBar />
-          </div>
-        </div>
-        <h1 className="sr-only">Scriptwerk — Miniscript Studio</h1>
-      </header>
-      <AndroidInstallBanner />
-      <div className="min-h-0 w-full min-w-0 flex-1 overflow-hidden">
-        {tab === "stages" ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden px-3 pt-2">
-            <StageBuilder />
-          </div>
-        ) : null}
-        {tab === "tree" ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden pt-2">
-            <PolicyGraph />
-          </div>
-        ) : null}
-        {tab === "keys" ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden px-3 pt-2">
-            <KeyBoard fill />
-          </div>
-        ) : null}
-        {tab === "ops" && expert ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            <ExpertPanel />
-          </div>
-        ) : null}
-        {tab === "read" ? (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            <InterpreterPanel />
-          </div>
-        ) : null}
+    <Tabs value={tab} onValueChange={setTab} className="flex h-full w-full min-w-0 flex-col">
+      <div className="shrink-0 px-3 pt-2">
+        <TabsList className="relative z-10 w-full" style={{ touchAction: "manipulation" }}>
+          <TabsTrigger value="stages" className="flex-1 px-2 text-xs">
+            {t("tabs.stages")}
+          </TabsTrigger>
+          <TabsTrigger value="tree" className="flex-1 px-2 text-xs">
+            {t("tabs.tree")}
+          </TabsTrigger>
+          <TabsTrigger value="keys" className="flex-1 px-2 text-xs">
+            {t("tabs.keys")}
+          </TabsTrigger>
+          {expert ? (
+            <TabsTrigger value="ops" className="flex-1 px-2 text-xs">
+              {t("tabs.expert")}
+            </TabsTrigger>
+          ) : null}
+          <TabsTrigger value="read" className="flex-1 px-2 text-xs">
+            {t("tabs.read")}
+          </TabsTrigger>
+        </TabsList>
       </div>
-      <nav
-        className="android-nav z-30 shrink-0 border-t border-border bg-surface"
-        role="tablist"
-        aria-label={t("android.nav")}
+      <TabsContent value="stages" className="mt-2 min-h-0 w-full min-w-0 flex-1 overflow-hidden px-3 data-[state=active]:flex data-[state=active]:flex-col">
+        <StageBuilder />
+      </TabsContent>
+      <TabsContent
+        value="tree"
+        className="mt-2 min-h-0 w-full min-w-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
       >
-        {items.map((item) => {
-          const Icon = item.icon;
-          const active = tab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(item.id)}
-              className={
-                active
-                  ? "flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-primary"
-                  : "flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-fg-muted"
-              }
-            >
-              <span
-                className={
-                  active
-                    ? "inline-flex h-8 w-14 items-center justify-center rounded-full bg-primary/15"
-                    : "inline-flex h-8 w-14 items-center justify-center rounded-full"
-                }
-              >
-                <Icon className="size-5" strokeWidth={active ? 2.2 : 1.8} />
-              </span>
-              <span className="max-w-full truncate px-0.5 text-[0.65rem] font-medium tracking-wide">
-                {item.label}
-              </span>
-            </button>
-          );
-        })}
-      </nav>
+        <PolicyGraph />
+      </TabsContent>
+      <TabsContent value="keys" className="mt-2 min-h-0 w-full min-w-0 flex-1 overflow-hidden px-3 data-[state=active]:flex data-[state=active]:flex-col">
+        <KeyBoard fill />
+      </TabsContent>
+      {expert ? (
+        <TabsContent value="ops" className="mt-2 min-h-0 w-full min-w-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col">
+          <ExpertPanel />
+        </TabsContent>
+      ) : null}
+      <TabsContent value="read" className="mt-2 min-h-0 w-full min-w-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col">
+        <InterpreterPanel />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function MountWhenVisible({
+  className,
+  dataLayout,
+  children,
+}: {
+  className?: string;
+  dataLayout: "desktop" | "mobile";
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      setShow(getComputedStyle(el).display !== "none");
+    };
+    check();
+    const mq = window.matchMedia("(min-width: 1024px)");
+    mq.addEventListener("change", check);
+    return () => mq.removeEventListener("change", check);
+  }, []);
+  return (
+    <div ref={ref} data-layout={dataLayout} className={className}>
+      {show ? children : null}
     </div>
   );
 }
@@ -544,7 +511,7 @@ function LangSwitch({
   label: string;
 }) {
   return (
-    <div role="group" aria-label={label} className="flex shrink-0 flex-wrap gap-1.5">
+    <div role="group" aria-label={label} className="ml-auto flex shrink-0 flex-wrap gap-1.5">
       {(["de", "en"] as const).map((code) => (
         <button
           key={code}

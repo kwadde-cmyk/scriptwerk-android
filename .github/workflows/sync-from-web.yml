@@ -1,0 +1,39 @@
+name: Sync from web
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "25 * * * *"
+  repository_dispatch:
+    types: [sync-from-web]
+
+concurrency:
+  group: sync-from-web
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Pull scriptwerk-startos into src
+        run: node scripts/sync-from-web.mjs
+      - name: Commit if web moved
+        run: |
+          git config user.name "scriptwerk-sync"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "already in sync"
+            exit 0
+          fi
+          sha=$(head -n1 .web-upstream | cut -c1-7)
+          name=$(grep -oE 'versionName "[^"]+"' android/app/build.gradle | head -1 | cut -d'"' -f2)
+          git commit -m "sync web ${name} (${sha}) from scriptwerk-startos"
+          git push

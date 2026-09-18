@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { analyzeDescriptor } from "./analyze.ts";
 import { corsBlocked, bookmarkletHref, bridgeScript } from "./bridge.ts";
-import { skipNodeBridge, withDeadline } from "./native-http.ts";
 import {
   addressSpace,
   defaultRpcPort,
@@ -56,49 +55,6 @@ describe("bitcoind rpc helpers", () => {
       }),
       true,
     );
-  });
-
-  it("never offers the node-tab bridge in Node/CI (no phone UA)", () => {
-    assert.equal(skipNodeBridge(), false);
-  });
-
-  it("rejects hanging work at the deadline", async () => {
-    await assert.rejects(
-      () => withDeadline(new Promise(() => {}), 20, "node.err.unreachable"),
-      /node\.err\.unreachable/,
-    );
-  });
-
-  it("skips the node-tab bridge on an Android UA", () => {
-    const proto = Object.getPrototypeOf(globalThis.navigator ?? {});
-    const desc = Object.getOwnPropertyDescriptor(proto, "userAgent")
-      ?? Object.getOwnPropertyDescriptor(globalThis.navigator ?? {}, "userAgent");
-    Object.defineProperty(globalThis.navigator, "userAgent", {
-      configurable: true,
-      get: () => "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36",
-    });
-    try {
-      assert.equal(skipNodeBridge(), true);
-      assert.equal(
-        corsBlocked({
-          url: "http://192.168.1.20:8332",
-          origin: "https://localhost",
-          space: "local",
-          ok: false,
-          probe: null,
-          steps: [
-            { id: "reach", status: "ok", detail: "opaque" },
-            { id: "corsGet", status: "skip", detail: "only POST" },
-            { id: "preflight", status: "fail", detail: "Failed to fetch" },
-            { id: "rpc", status: "fail", detail: "blocked" },
-          ],
-        }),
-        false,
-      );
-    } finally {
-      if (desc) Object.defineProperty(globalThis.navigator, "userAgent", desc);
-      else delete (globalThis.navigator as { userAgent?: string }).userAgent;
-    }
   });
 
   it("builds a POST-only bookmarklet", () => {

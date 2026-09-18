@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { compileDescriptorCached } from "@/lib/miniscript/compile";
+import { useState } from "react";
+import { compiledForStudio } from "@/lib/miniscript/policy-mode";
 import { deletePolicy, listPolicies, peekChecksum, savePolicy, type SavedPolicy } from "@/lib/policy-library";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
@@ -32,10 +32,10 @@ export function PolicyLibraryButton() {
   const nesting = useStudio((s) => s.nesting);
   const mode = useStudio((s) => s.mode);
   const maxOlder = useStudio((s) => s.maxOlder);
-  const compiled = useMemo(
-    () => compileDescriptorCached(root, keys, reuseKeys),
-    [root, keys, reuseKeys],
-  );
+  const policyMode = useStudio((s) => s.policyMode);
+  const originalDescriptor = useStudio((s) => s.originalDescriptor);
+  const liftWarning = useStudio((s) => s.liftWarning);
+  const compiled = useStudio(compiledForStudio);
 
   function refresh() {
     setItems(listPolicies());
@@ -62,6 +62,9 @@ export function PolicyLibraryButton() {
         mode,
         maxOlder,
         policyName: name,
+        policyMode,
+        originalDescriptor,
+        liftWarning,
       },
     });
     refresh();

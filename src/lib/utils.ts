@@ -5,9 +5,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-let seq = 0;
-
 export function uid(prefix = "n"): string {
-  seq += 1;
-  return `${prefix}_${seq}`;
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }

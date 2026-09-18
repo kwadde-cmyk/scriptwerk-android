@@ -17,6 +17,7 @@ import {
   type KeyEntry,
 } from "@/lib/miniscript/keys";
 import { isDerivedAlias, reuseAliasHints, slotsForAccount, type Stage, type StageSignerSlot } from "@/lib/miniscript/stages";
+import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
 import { FilePick, QrScanner } from "@/components/qr-io";
 import { useHwFillKey } from "@/components/hardware-usb";
@@ -282,6 +283,7 @@ export function KeyReuseControls() {
   const { t } = useT();
   const reuseKeys = useStudio((s) => s.reuseKeys);
   const setReuseKeys = useStudio((s) => s.setReuseKeys);
+  const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   return (
     <div className="flex min-w-0 flex-col items-start gap-1">
       <span className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("keys.section")}</span>
@@ -290,6 +292,7 @@ export function KeyReuseControls() {
         <button
           type="button"
           aria-pressed={!reuseKeys}
+          disabled={frozen}
           onClick={() => setReuseKeys(false)}
           className={
             !reuseKeys
@@ -302,6 +305,7 @@ export function KeyReuseControls() {
         <button
           type="button"
           aria-pressed={reuseKeys}
+          disabled={frozen}
           onClick={() => setReuseKeys(true)}
           className={
             reuseKeys

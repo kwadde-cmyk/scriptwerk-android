@@ -6,7 +6,6 @@
  */
 
 import { z } from "zod";
-import { CONNECTOR_TOKEN_READY_EVENT } from "./app-data/types";
 import { resolveParentEmbedderOrigin } from "./preview-embedder-origin";
 
 export {
@@ -38,10 +37,6 @@ const HistorySchema = EnvelopeSchema.extend({
   delta: z.union([z.literal(-1), z.literal(1)]),
 });
 
-const ConnectorTokenReadySchema = EnvelopeSchema.extend({
-  type: z.literal("connector-token-ready"),
-});
-
 export type PreviewHostBridgeOptions = {
   /** Prefer the app router when available; falls back to history.pushState. */
   navigate?: (path: string) => void;
@@ -62,32 +57,24 @@ export function isSafeBridgePath(path: string): boolean {
 }
 
 /**
- * Origin of the Grok embedder framing this page, or null when the page runs
- * top-level (download/export, local `npm run dev`, deployed sites) or under a
- * non-Grok parent. Client-only; null during SSR.
- */
-export function resolveCurrentEmbedderOrigin(): string | null {
-  if (typeof window === "undefined") return null;
-  const ancestorOrigin =
-    typeof location.ancestorOrigins !== 'undefined' && location.ancestorOrigins.length > 0
-      ? location.ancestorOrigins[0]
-      : null;
-  return resolveParentEmbedderOrigin(
-    window.parent === window,
-    document.referrer,
-    ancestorOrigin,
-    window.location.hostname,
-  );
-}
-
-/**
  * Install host↔guest messaging. Returns a dispose function.
  * Noops (returns a no-op dispose) when not embedded under a Grok parent.
  */
 export function installPreviewHostBridge(
   options: PreviewHostBridgeOptions = {},
 ): () => void {
-  const parentOrigin = resolveCurrentEmbedderOrigin();
+  if (typeof window === "undefined") return () => {};
+
+  const ancestorOrigin =
+    typeof location.ancestorOrigins !== 'undefined' && location.ancestorOrigins.length > 0
+      ? location.ancestorOrigins[0]
+      : null;
+  const parentOrigin = resolveParentEmbedderOrigin(
+    window.parent === window,
+    document.referrer,
+    ancestorOrigin,
+    window.location.hostname,
+  );
   if (parentOrigin === null) return () => {};
 
   const ROOT_STATE_KEY = "__grokPreviewBridgeRoot";
@@ -180,49 +167,38 @@ export function installPreviewHostBridge(
     });
   };
 
-  // Host re-handshake: it may have (re)mounted after our install-time
-  // announce, or asked before we hydrated. Announce again.
-  const onHello = (data: unknown) => {
-    if (!HelloSchema.safeParse(data).success) return;
-    announce();
-  };
-
-  const onNavigate = (data: unknown) => {
-    const parsed = NavigateSchema.safeParse(data);
-    if (!parsed.success) return;
-    navigate(parsed.data.path);
-    // Router navigations often update location asynchronously; report after a tick.
-    queueMicrotask(reportLocation);
-  };
-
-  const onHistory = (data: unknown) => {
-    const parsed = HistorySchema.safeParse(data);
-    if (!parsed.success) return;
-    // Do not history.go(-1) off the first entry — that leaves the preview.
-    if (parsed.data.delta === -1 && isAtHistoryRoot()) return;
-    // Location sync comes from the popstate listener once history settles.
-    window.history.go(parsed.data.delta);
-  };
-
-  const onConnectorTokenReady = (data: unknown) => {
-    if (!ConnectorTokenReadySchema.safeParse(data).success) return;
-    window.dispatchEvent(new Event(CONNECTOR_TOKEN_READY_EVENT));
-  };
-
-  const hostMessageHandlers = new Map<string, (data: unknown) => void>([
-    ["hello", onHello],
-    ["navigate", onNavigate],
-    ["history", onHistory],
-    ["connector-token-ready", onConnectorTokenReady],
-  ]);
-
   const onMessage = (event: MessageEvent) => {
     if (event.source !== window.parent) return;
     if (event.origin !== parentOrigin) return;
 
     const envelope = EnvelopeSchema.safeParse(event.data);
     if (!envelope.success || envelope.data.version !== PREVIEW_BRIDGE_VERSION) return;
-    hostMessageHandlers.get(envelope.data.type)?.(event.data);
+
+    // Host re-handshake: it may have (re)mounted after our install-time
+    // announce, or asked before we hydrated. Announce again.
+    if (envelope.data.type === "hello") {
+      if (!HelloSchema.safeParse(event.data).success) return;
+      announce();
+      return;
+    }
+
+    if (envelope.data.type === "navigate") {
+      const parsed = NavigateSchema.safeParse(event.data);
+      if (!parsed.success) return;
+      navigate(parsed.data.path);
+      // Router navigations often update location asynchronously; report after a tick.
+      queueMicrotask(reportLocation);
+      return;
+    }
+
+    if (envelope.data.type === "history") {
+      const parsed = HistorySchema.safeParse(event.data);
+      if (!parsed.success) return;
+      // Do not history.go(-1) off the first entry — that leaves the preview.
+      if (parsed.data.delta === -1 && isAtHistoryRoot()) return;
+      // Location sync comes from the popstate listener once history settles.
+      window.history.go(parsed.data.delta);
+    }
   };
 
   const onPopState = () => {

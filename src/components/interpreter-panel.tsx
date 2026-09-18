@@ -1,4 +1,5 @@
-import { compileBsms, compileDescriptorCached, descriptorOrderVariants } from "@/lib/miniscript/compile";
+import { compileBsms, descriptorOrderVariants } from "@/lib/miniscript/compile";
+import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { descriptorChecksums, peekScript } from "@/lib/miniscript/highlight";
 import { stageOrderCount } from "@/lib/miniscript/stages";
 import { explainPolicy } from "@/lib/miniscript/explain";
@@ -32,17 +33,13 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
   const { t, locale } = useT();
   const root = useStudio((s) => s.root);
   const keys = useStudio((s) => s.keys);
-  const reuseKeys = useStudio((s) => s.reuseKeys);
   const [sheet, setSheet] = useState("create");
   const explained = useMemo(
     () => explainPolicy(root ?? { id: "empty", kind: "hole" }, locale, keys),
     [root, locale, keys],
   );
   const issues = useMemo(() => validatePolicy(root, locale), [root, locale]);
-  const compiled = useMemo(
-    () => compileDescriptorCached(root, keys, reuseKeys),
-    [root, keys, reuseKeys],
-  );
+  const compiled = useStudio(compiledForStudio);
   const ms = compiled?.miniscript ?? "";
   const descriptorText = compiled?.ok ? compiled.descriptor : compiled?.error ?? t("read.noPolicy");
   const problemCount = issues.filter((i) => i.level === "error" || i.level === "warn").length;
@@ -66,6 +63,7 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
           </TabsTrigger>
         </TabsList>
       </div>
+      <PolicyStatusBanner />
       <TabsContent
         value="create"
         className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
@@ -168,10 +166,8 @@ function OrderVariants() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const count = useMemo(() => stageOrderCount(stages), [stages]);
-  const compiled = useMemo(
-    () => compileDescriptorCached(root, keys, reuseKeys),
-    [root, keys, reuseKeys],
-  );
+  const compiled = useStudio(compiledForStudio);
+  const frozen = useStudio((s) => s.policyMode === "raw" || s.policyMode === "display");
   const checksums = useMemo(
     () => (compiled?.ok ? descriptorChecksums(compiled.descriptor) : []),
     [compiled],
@@ -192,6 +188,7 @@ function OrderVariants() {
       );
     });
   }, [variants, needle]);
+  if (frozen) return null;
   if (!expert || (count.total <= 1 && !count.capped)) {
     if (!checksums.length) return null;
     return (
@@ -360,5 +357,36 @@ function ScriptPeek({ title, value }: { title: string; value: string }) {
         </DialogContent>
       </Dialog>
     </section>
+  );
+}
+
+export function PolicyStatusBanner({ className = "shrink-0 px-4 pt-3" }: { className?: string }) {
+  const { t } = useT();
+  const policyMode = useStudio((s) => s.policyMode);
+  const liftWarning = useStudio((s) => s.liftWarning);
+  const rebuildAsStages = useStudio((s) => s.rebuildAsStages);
+  if (!policyIsFrozen(policyMode)) return null;
+  const raw = policyMode === "raw";
+  return (
+    <div className={className}>
+    <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
+      <p className="text-xs text-pretty text-fg">
+        {raw ? t("policy.rawBanner") : t("policy.displayBanner")}
+      </p>
+      {raw && liftWarning ? (
+        <p className="mt-1 text-2xs text-fg-muted">
+          {(() => {
+            const key = `policy.why.${liftWarning}`;
+            const text = t(key);
+            return text === key ? t("policy.why.unknown") : text;
+          })()}
+        </p>
+      ) : null}
+      <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => rebuildAsStages()}>
+        {t("policy.rebuild")}
+      </Button>
+      <p className="mt-1 text-2xs text-fg-subtle">{t("policy.rebuildHint")}</p>
+    </div>
+    </div>
   );
 }

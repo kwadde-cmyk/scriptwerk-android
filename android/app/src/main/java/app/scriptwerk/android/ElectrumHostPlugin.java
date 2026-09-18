@@ -1,9 +1,5 @@
 package app.scriptwerk.android;
 
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.SSLCertificateSocketFactory;
 import android.util.Log;
 
 import com.getcapacitor.JSObject;
@@ -20,110 +16,143 @@ import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.ConnectException;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
+import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 /**
- * Electrum JSON-RPC 1.4 over TLS for StartOS Fulcrum / Electrs.
- * StartOS terminates TLS in front of Fulcrum — LAN has no plaintext port.
+ * Electrum JSON-RPC 1.4 over TLS (StartOS Fulcrum).
+ * PluginCall getters stay on the Capacitor thread — background reads deadlock the WebView.
  */
 @CapacitorPlugin(name = "ElectrumHost")
 public class ElectrumHostPlugin extends Plugin {
     private static final String TAG = "ScriptwerkElectrum";
 
     private volatile String lastIp = "";
-    private volatile String lastNet = "";
     private volatile String lastTry = "";
     private volatile String lastDetail = "";
+    private volatile String lastCert = "";
+    private volatile Socket liveSocket;
+
+    @PluginMethod
+    public void ready(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("ok", true);
+        ret.put("via", "ElectrumHost");
+        ret.put("sdk", android.os.Build.VERSION.SDK_INT);
+        call.resolve(ret);
+    }
 
     @PluginMethod
     public void ping(PluginCall call) {
-        runAsync(call, () -> pingNow(call));
+        final String host = String.valueOf(call.getString("host", "")).trim();
+        final int port = call.getInt("port") == null ? 50001 : call.getInt("port");
+        final boolean tls = Boolean.TRUE.equals(call.getBoolean("tls", false));
+        String sniArg = String.valueOf(call.getString("sni", "")).trim();
+        if (sniArg.isEmpty()) sniArg = host;
+        final String sni = sniArg;
+        final int timeoutMs = call.getInt("timeoutMs") == null ? 7000 : Math.max(3000, call.getInt("timeoutMs"));
+        go(call, () -> pingNow(host, port, tls, sni, timeoutMs), 7000);
     }
 
     @PluginMethod
     public void rpc(PluginCall call) {
-        runAsync(call, () -> rpcNow(call));
-    }
-
-    private void runAsync(PluginCall call, Job job) {
-        Thread t = new Thread(() -> {
-            ExecutorService ex = Executors.newSingleThreadExecutor();
-            try {
-                JSObject ret = ex.submit(job::run).get(18, TimeUnit.SECONDS);
-                finishOk(call, ret);
-            } catch (TimeoutException e) {
-                finishOk(call, failObj("hw.utxo.unreachable", "timeout"));
-            } catch (ExecutionException e) {
-                Throwable c = e.getCause();
-                finishOk(call, failObj(c instanceof Exception ? keyOf((Exception) c) : "hw.utxo.bad", shortErr(c)));
-            } catch (Exception e) {
-                finishOk(call, failObj(keyOf(e), shortErr(e)));
-            } finally {
-                ex.shutdownNow();
-            }
-        }, "scriptwerk-electrum");
-        t.start();
-    }
-
-    private void finishOk(PluginCall call, JSObject ret) {
-        android.app.Activity act = getActivity();
-        if (act != null) act.runOnUiThread(() -> call.resolve(ret));
-        else call.resolve(ret);
+        final String host = String.valueOf(call.getString("host", "")).trim();
+        final int port = call.getInt("port") == null ? 50001 : call.getInt("port");
+        final boolean tls = Boolean.TRUE.equals(call.getBoolean("tls", false));
+        String sniArg = String.valueOf(call.getString("sni", "")).trim();
+        if (sniArg.isEmpty()) sniArg = host;
+        final String sni = sniArg;
+        final int timeoutMs = call.getInt("timeoutMs") == null ? 20000 : Math.max(3000, call.getInt("timeoutMs"));
+        final String callsJson = call.getString("callsJson");
+        JSONArray calls;
+        try {
+            calls = callsJson != null && !callsJson.trim().isEmpty() ? new JSONArray(callsJson) : new JSONArray();
+        } catch (Exception e) {
+            call.resolve(failObj("hw.utxo.bad", "callsJson"));
+            return;
+        }
+        final JSONArray jobs = calls;
+        go(call, () -> rpcNow(host, port, tls, sni, timeoutMs, jobs), timeoutMs + 2000);
     }
 
     private interface Job {
         JSObject run() throws Exception;
     }
 
-    private JSObject pingNow(PluginCall call) {
-        try {
-            Session sess = openSession(call, 8000);
+    private void go(PluginCall call, Job job, long killMs) {
+        Thread worker = new Thread(() -> {
             try {
-                int id = 1;
-                send(sess.out, id, "server.version", new JSONArray().put("Scriptwerk").put("1.4"), sess.pending);
-                sess.out.flush();
-                JSONObject msg = readOne(sess, id);
-                JSObject ret = new JSObject();
-                ret.put("ok", true);
-                ret.put("via", "ElectrumHost");
-                ret.put("version", formatVersion(msg.has("result") ? msg.get("result") : ""));
-                ret.put("host", sess.ip != null ? sess.ip : sess.host);
-                ret.put("port", sess.port);
-                ret.put("net", lastNet);
-                return ret;
+                call.resolve(job.run());
+            } catch (Exception e) {
+                call.resolve(failObj(keyOf(e), lastDetail.isEmpty() ? shortErr(e) : lastDetail));
             } finally {
-                sess.close();
+                liveSocket = null;
             }
-        } catch (Exception e) {
-            return failObj(keyOf(e), lastDetail.isEmpty() ? shortErr(e) : lastDetail);
+        }, "scriptwerk-electrum");
+        worker.start();
+        Thread killer = new Thread(() -> {
+            try {
+                Thread.sleep(Math.max(3000, killMs));
+            } catch (InterruptedException ignored) {
+                return;
+            }
+            Socket s = liveSocket;
+            if (s != null) {
+                Log.i(TAG, "watchdog close " + lastTry + " " + lastDetail);
+                try {
+                    s.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }, "scriptwerk-electrum-kill");
+        killer.start();
+    }
+
+    private JSObject pingNow(String host, int port, boolean tls, String sni, int timeoutMs) throws Exception {
+        lastIp = "";
+        lastDetail = "";
+        lastCert = "";
+        lastTry = tls ? "tls12-tofu" : "tcp";
+        Session sess = openSession(host, port, tls, sni, timeoutMs);
+        try {
+            int id = 1;
+            send(sess.out, id, "server.version", new JSONArray().put("Scriptwerk").put("1.4"), sess.pending);
+            sess.out.flush();
+            JSONObject msg = readOne(sess, id);
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            ret.put("via", "ElectrumHost");
+            ret.put("version", formatVersion(msg.has("result") ? msg.get("result") : ""));
+            ret.put("host", sess.ip != null ? sess.ip : sess.host);
+            ret.put("port", sess.port);
+            ret.put("cert", sess.cert != null ? sess.cert : lastCert);
+            ret.put("attempt", lastTry);
+            return ret;
+        } finally {
+            sess.close();
         }
     }
 
-    private JSObject rpcNow(PluginCall call) throws Exception {
-        JSONArray calls = readCalls(call);
-        Session sess = openSession(call, 20000);
+    private JSObject rpcNow(String host, int port, boolean tls, String sni, int timeoutMs, JSONArray calls) throws Exception {
+        Session sess = openSession(host, port, tls, sni, timeoutMs);
         try {
             int nextId = 1;
             send(sess.out, nextId++, "server.version", new JSONArray().put("Scriptwerk").put("1.4"), sess.pending);
@@ -150,9 +179,7 @@ public class ElectrumHostPlugin extends Plugin {
                 if (!sess.pending.containsKey(id)) continue;
                 sess.pending.remove(id);
                 remaining--;
-                if (msg.has("error") && !msg.isNull("error")) {
-                    throw new Exception(errorMessage(msg));
-                }
+                if (msg.has("error") && !msg.isNull("error")) throw new Exception(errorMessage(msg));
                 byId[id] = msg;
             }
 
@@ -179,41 +206,19 @@ public class ElectrumHostPlugin extends Plugin {
         ret.put("error", error == null || error.isEmpty() ? "hw.utxo.unreachable" : error);
         ret.put("detail", detail == null ? "" : detail);
         ret.put("ip", lastIp);
-        ret.put("net", lastNet);
         ret.put("attempt", lastTry);
+        if (lastCert != null && !lastCert.isEmpty()) ret.put("cert", lastCert);
         return ret;
     }
 
-    private Session openSession(PluginCall call, int defaultTimeout) throws Exception {
-        String host = String.valueOf(call.getString("host", "")).trim();
-        Integer portObj = call.getInt("port");
-        int port = portObj == null ? 50001 : portObj;
-        boolean tls = Boolean.TRUE.equals(call.getBoolean("tls", false));
-        String sni = String.valueOf(call.getString("sni", "")).trim();
-        if (sni.isEmpty()) sni = host;
-        int timeoutMs = call.getInt("timeoutMs") == null ? defaultTimeout : call.getInt("timeoutMs");
-        if (timeoutMs < 1000) timeoutMs = defaultTimeout;
+    private Session openSession(String host, int port, boolean tls, String sni, int timeoutMs) throws Exception {
         if (host.isEmpty()) throw new Exception("hw.utxo.needElectrum");
         if (isLoopback(host)) throw new Exception("hw.utxo.loopback");
         if (!hostAllowed(host)) throw new Exception(isPublicIndexer(host) ? "hw.utxo.noPublic" : "hw.utxo.lanOnly");
-        lastIp = "";
-        lastDetail = "";
-        lastTry = "";
         Log.i(TAG, "connect " + host + ":" + port + " tls=" + tls + " sni=" + sni);
-        int connectMs = Math.min(6000, Math.max(3000, timeoutMs));
-        Socket sock;
-        try {
-            sock = openSocket(host, port, tls, sni, connectMs);
-        } catch (Exception e) {
-            if (lastBound && lastCm != null) {
-                try {
-                    lastCm.bindProcessToNetwork(null);
-                } catch (Exception ignored) {
-                }
-                lastBound = false;
-            }
-            throw e;
-        }
+        lastTry = tls ? "tls12-tofu" : "tcp";
+        int connectMs = Math.min(5000, Math.max(2500, timeoutMs));
+        Socket sock = openSocket(host, port, tls, sni, connectMs);
         sock.setSoTimeout(timeoutMs);
         Session sess = new Session();
         sess.host = host;
@@ -221,26 +226,11 @@ public class ElectrumHostPlugin extends Plugin {
         sess.port = port;
         sess.timeoutMs = timeoutMs;
         sess.sock = sock;
-        sess.cm = lastCm;
-        sess.bound = lastBound;
-        lastBound = false;
-        lastCm = null;
+        sess.cert = lastCert;
         sess.out = new BufferedWriter(new OutputStreamWriter(sock.getOutputStream(), StandardCharsets.UTF_8));
         sess.in = new BufferedReader(new InputStreamReader(sock.getInputStream(), StandardCharsets.UTF_8));
         sess.pending = new HashMap<>();
         return sess;
-    }
-
-    private volatile ConnectivityManager lastCm = null;
-    private volatile boolean lastBound = false;
-
-    private static JSONArray readCalls(PluginCall call) throws Exception {
-        String json = call.getString("callsJson");
-        if (json != null && !json.trim().isEmpty()) {
-            return new JSONArray(json);
-        }
-        if (call.getArray("calls") != null) return call.getArray("calls");
-        return new JSONArray();
     }
 
     private static JSONObject readOne(Session sess, int wantId) throws Exception {
@@ -278,190 +268,67 @@ public class ElectrumHostPlugin extends Plugin {
         out.write("\n");
     }
 
-    @SuppressWarnings("deprecation")
     private Socket openSocket(String host, int port, boolean tls, String sni, int connectMs) throws Exception {
-        Network net = pickLanNetwork();
-        lastNet = netName(net);
-        InetAddress[] ips = resolveAll(net, host, connectMs);
-        String sniHost = sniFor(sni, host);
-        List<String> errors = new ArrayList<>();
-        ConnectivityManager cm = getCm();
-        boolean bound = false;
-        if (cm != null && net != null) {
-            try {
-                bound = cm.bindProcessToNetwork(net);
-            } catch (Exception ignored) {
-            }
-        }
-        lastCm = cm;
-        lastBound = bound;
-        try {
-            int n = 0;
-            for (InetAddress ip : ips) {
-                if (ip.isLoopbackAddress() || ip.isAnyLocalAddress()) continue;
-                if (n++ >= 2) break;
-                lastIp = ip.getHostAddress();
-                InetSocketAddress addr = new InetSocketAddress(ip, port);
-                Log.i(TAG, "try " + lastIp + ":" + port + " tls=" + tls + " net=" + lastNet + " sni=" + sniHost);
-                if (tls) {
-                    try {
-                        lastTry = "insecure";
-                        return connectInsecure(net, addr, sniHost, connectMs);
-                    } catch (Exception e) {
-                        errors.add(lastIp + " insecure " + shortErr(e));
-                        Log.i(TAG, "insecure fail " + shortErr(e));
-                    }
-                    try {
-                        lastTry = "wrap";
-                        return connectWrap(net, addr, sniHost, connectMs);
-                    } catch (Exception e) {
-                        errors.add(lastIp + " wrap " + shortErr(e));
-                        Log.i(TAG, "wrap fail " + shortErr(e));
-                    }
-                } else {
-                    try {
-                        lastTry = "tcp";
-                        return connectPlain(net, addr, connectMs);
-                    } catch (Exception e) {
-                        errors.add(lastIp + " tcp " + shortErr(e));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            errors.add(shortErr(e));
-            throw e;
-        } finally {
-            lastDetail = String.join(" | ", errors);
-        }
-        if (tls) throw new Exception("hw.utxo.tls");
-        throw new Exception("hw.utxo.unreachable");
+        Socket tcp = connectTcp(host, port, connectMs);
+        if (!tls) return tcp;
+        lastTry = "tls12-tofu";
+        lastDetail = "tcp-ok " + lastIp + " tofu " + sniFor(sni, host);
+        return wrapTofu(tcp, sniFor(sni, host), port, connectMs);
     }
 
-    @SuppressWarnings("deprecation")
-    private Socket connectInsecure(Network net, InetSocketAddress addr, String sni, int connectMs) throws Exception {
-        SSLCertificateSocketFactory factory =
-            (SSLCertificateSocketFactory) SSLCertificateSocketFactory.getInsecure(connectMs, null);
-        Socket base = net != null ? net.getSocketFactory().createSocket() : new Socket();
-        try {
-            base.connect(addr, connectMs);
-            String peer = sni.isEmpty() ? "localhost" : sni;
-            SSLSocket s = (SSLSocket) factory.createSocket(base, peer, addr.getPort(), true);
-            try {
-                factory.setHostname(s, peer);
-            } catch (Exception ignored) {
-            }
-            disableEndpointCheck(s);
-            s.setUseClientMode(true);
-            s.setSoTimeout(connectMs);
-            s.startHandshake();
-            return s;
-        } catch (Exception e) {
-            try {
-                base.close();
-            } catch (Exception ignored) {
-            }
-            throw e;
+    private Socket connectTcp(String host, int port, int connectMs) throws Exception {
+        Socket base = new Socket();
+        liveSocket = base;
+        base.connect(new InetSocketAddress(host, port), connectMs);
+        InetAddress ip = base.getInetAddress();
+        lastIp = ip != null ? ip.getHostAddress() : host;
+        if (ip != null && (ip.isLoopbackAddress() || ip.isAnyLocalAddress())) {
+            base.close();
+            throw new Exception("hw.utxo.loopback");
         }
+        Log.i(TAG, "tcp " + lastIp + ":" + port);
+        lastDetail = "tcp-ok " + lastIp + ":" + port;
+        return base;
     }
 
-    @SuppressWarnings("deprecation")
-    private Socket connectWrap(Network net, InetSocketAddress addr, String sni, int connectMs) throws Exception {
-        SSLCertificateSocketFactory factory =
-            (SSLCertificateSocketFactory) SSLCertificateSocketFactory.getInsecure(connectMs, null);
-        SSLSocket s = (SSLSocket) factory.createSocket();
-        String peer = sni.isEmpty() ? "localhost" : sni;
+    private SSLSocket wrapTofu(Socket base, String sni, int port, int timeoutMs) throws Exception {
+        liveSocket = base;
+        CaptureTm tm = new CaptureTm();
+        SSLContext ctx;
         try {
-            factory.setHostname(s, peer);
+            ctx = SSLContext.getInstance("TLSv1.2");
+        } catch (Exception e) {
+            ctx = SSLContext.getInstance("TLS");
+        }
+        ctx.init(null, new TrustManager[]{tm}, new SecureRandom());
+        String peer = sni == null || sni.isEmpty() ? "localhost" : sni;
+        SSLSocket ssl = (SSLSocket) ctx.getSocketFactory().createSocket(base, peer, port, true);
+        liveSocket = ssl;
+        setSni(ssl, peer);
+        try {
+            ssl.setEnabledProtocols(new String[]{"TLSv1.2"});
         } catch (Exception ignored) {
         }
-        disableEndpointCheck(s);
-        s.setUseClientMode(true);
-        s.connect(addr, connectMs);
-        s.setSoTimeout(connectMs);
-        s.startHandshake();
-        return s;
+        ssl.setUseClientMode(true);
+        ssl.setSoTimeout(timeoutMs);
+        lastDetail = "tcp-ok " + lastIp + " tls12 sni=" + peer;
+        ssl.startHandshake();
+        lastCert = certInfo(tm.chain, ssl);
+        lastDetail = "tls12-tofu " + lastIp + " " + lastCert;
+        Log.i(TAG, lastDetail);
+        return ssl;
     }
 
-    private Socket connectPlain(Network net, InetSocketAddress addr, int connectMs) throws Exception {
-        Socket s = net != null ? net.getSocketFactory().createSocket() : new Socket();
-        s.connect(addr, connectMs);
-        return s;
-    }
-
-    private static void disableEndpointCheck(SSLSocket s) {
+    private static void setSni(SSLSocket ssl, String peer) {
         try {
-            SSLParameters params = s.getSSLParameters();
+            ssl.getClass().getMethod("setHostname", String.class).invoke(ssl, peer);
+        } catch (Exception ignored) {
+        }
+        try {
+            SSLParameters params = ssl.getSSLParameters();
             params.setEndpointIdentificationAlgorithm(null);
-            s.setSSLParameters(params);
+            ssl.setSSLParameters(params);
         } catch (Exception ignored) {
-        }
-    }
-
-    private ConnectivityManager getCm() {
-        try {
-            return (ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private Network pickLanNetwork() {
-        try {
-            ConnectivityManager cm = getCm();
-            if (cm == null) return null;
-            Network wifi = null;
-            Network eth = null;
-            for (Network n : cm.getAllNetworks()) {
-                NetworkCapabilities caps = cm.getNetworkCapabilities(n);
-                if (caps == null) continue;
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) eth = n;
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = n;
-            }
-            if (wifi != null) return wifi;
-            if (eth != null) return eth;
-            return cm.getActiveNetwork();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static String netName(Network net) {
-        return net == null ? "default" : net.toString();
-    }
-
-    private InetAddress[] resolveAll(Network net, String host, int timeoutMs) throws Exception {
-        if (host.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
-            return new InetAddress[]{InetAddress.getByName(host)};
-        }
-        ExecutorService ex = Executors.newSingleThreadExecutor();
-        try {
-            Future<InetAddress[]> f = ex.submit(() -> {
-                LinkedHashSet<InetAddress> set = new LinkedHashSet<>();
-                try {
-                    if (net != null) set.add(net.getByName(host));
-                } catch (Exception ignored) {
-                }
-                try {
-                    for (InetAddress a : InetAddress.getAllByName(host)) set.add(a);
-                } catch (Exception ignored) {
-                }
-                List<InetAddress> v4 = new ArrayList<>();
-                List<InetAddress> v6 = new ArrayList<>();
-                for (InetAddress a : set) {
-                    if (a instanceof Inet4Address) v4.add(a);
-                    else v6.add(a);
-                }
-                v4.addAll(v6);
-                if (v4.isEmpty()) throw new UnknownHostException(host);
-                return v4.toArray(new InetAddress[0]);
-            });
-            return f.get(Math.min(4000, timeoutMs), TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            throw new Exception("hw.utxo.unreachable");
-        } catch (ExecutionException e) {
-            throw new Exception("hw.utxo.unreachable");
-        } finally {
-            ex.shutdownNow();
         }
     }
 
@@ -471,14 +338,39 @@ public class ElectrumHostPlugin extends Plugin {
         return h;
     }
 
+    private static String certInfo(X509Certificate[] chain, SSLSocket ssl) {
+        try {
+            X509Certificate leaf = null;
+            if (chain != null && chain.length > 0) leaf = chain[0];
+            if (leaf == null) {
+                SSLSession ses = ssl.getSession();
+                if (ses != null && ses.getPeerCertificates() != null && ses.getPeerCertificates().length > 0
+                    && ses.getPeerCertificates()[0] instanceof X509Certificate) {
+                    leaf = (X509Certificate) ses.getPeerCertificates()[0];
+                }
+            }
+            if (leaf == null) return "";
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(leaf.getEncoded());
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < d.length; i++) {
+                if (i > 0 && i % 2 == 0) hex.append(":");
+                hex.append(String.format(Locale.US, "%02x", d[i]));
+            }
+            String cn = leaf.getSubjectDN() != null ? leaf.getSubjectDN().getName() : "";
+            return hex + (cn.isEmpty() ? "" : " " + cn);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private String keyOf(Exception e) {
         String msg = e.getMessage();
         if (msg != null && msg.startsWith("hw.")) return msg.split("[\\s·]")[0];
         if (e instanceof SSLException) return "hw.utxo.tls";
         if (e instanceof UnknownHostException || e instanceof ConnectException) return "hw.utxo.unreachable";
-        if ("insecure".equals(lastTry) || "wrap".equals(lastTry) || e instanceof SocketTimeoutException) {
-            return "hw.utxo.tls";
-        }
+        if (lastTry != null && lastTry.startsWith("tls")) return "hw.utxo.tls";
+        if (e instanceof SocketTimeoutException) return "hw.utxo.tls";
         return "hw.utxo.unreachable";
     }
 
@@ -487,7 +379,7 @@ public class ElectrumHostPlugin extends Plugin {
         String name = e.getClass().getSimpleName();
         String msg = e.getMessage();
         if (msg == null || msg.isEmpty()) return name;
-        if (msg.length() > 120) msg = msg.substring(0, 120);
+        if (msg.length() > 140) msg = msg.substring(0, 140);
         return name + " " + msg;
     }
 
@@ -512,7 +404,6 @@ public class ElectrumHostPlugin extends Plugin {
         return detail.isEmpty() ? "hw.utxo.bad" : detail;
     }
 
-    /** Keep in sync with nativeIndexerHostAllowed() in src/lib/electrum.ts */
     static boolean hostAllowed(String host) {
         String h = normalizeHost(host);
         if (h.isEmpty()) return false;
@@ -542,14 +433,21 @@ public class ElectrumHostPlugin extends Plugin {
         return host.trim().toLowerCase(Locale.ROOT).replace("[", "").replace("]", "");
     }
 
+    private static final class CaptureTm implements X509TrustManager {
+        volatile X509Certificate[] chain = new X509Certificate[0];
+
+        public void checkClientTrusted(X509Certificate[] c, String a) { chain = c; }
+        public void checkServerTrusted(X509Certificate[] c, String a) { chain = c; }
+        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+    }
+
     private static final class Session {
         String host;
         String ip;
+        String cert;
         int port;
         int timeoutMs;
         Socket sock;
-        ConnectivityManager cm;
-        boolean bound;
         BufferedWriter out;
         BufferedReader in;
         Map<Integer, JSONObject> pending;
@@ -558,12 +456,6 @@ public class ElectrumHostPlugin extends Plugin {
             try {
                 if (sock != null) sock.close();
             } catch (Exception ignored) {
-            }
-            if (bound && cm != null) {
-                try {
-                    cm.bindProcessToNetwork(null);
-                } catch (Exception ignored) {
-                }
             }
         }
     }

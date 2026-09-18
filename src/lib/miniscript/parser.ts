@@ -1,6 +1,7 @@
 import { uid } from "../utils.ts";
 import type { MsNode, WrapCode } from "./ast.ts";
 import { hole } from "./ast.ts";
+import { descsumCheck } from "./checksum.ts";
 
 const WRAP_SET = new Set<WrapCode>(["v", "a", "c", "d", "j", "n", "t", "u", "l", "s"]);
 const FRAGMENTS = new Set([
@@ -51,8 +52,12 @@ export function parseAny(input: string): ParseResult {
   } else if (inner.startsWith("sh(wsh(") && inner.endsWith("))")) {
     wrapper = "sh_wsh";
     inner = inner.slice(7, -2);
-  } else if (inner.startsWith("tr(")) {
-    throw new Error("Taproot-Descriptor (tr) wird in dieser Version noch nicht gelesen.");
+  } else if (inner.startsWith("tr(") || inner.startsWith("musig(")) {
+    throw new Error("import.err.taproot");
+  }
+
+  if (checksum && !descsumCheck(`${body}#${checksum}`)) {
+    throw new Error("import.err.checksum");
   }
 
   const node = parseExpression(inner, 0).node;
@@ -106,11 +111,16 @@ function parseExpression(s: string, start: number): { node: MsNode; i: number } 
   if (c.s[c.i] !== "(") {
     throw new Error(`Erwartet '(' nach ${name}.`);
   }
-  if (!FRAGMENTS.has(name)) {
-    throw new Error(`Unbekanntes Fragment "${name}".`);
-  }
   const args = readArgs(c);
-  let node = buildFromArgs(name, args);
+  let node: MsNode;
+  if (name === "tr" || name === "musig") {
+    throw new Error("import.err.taproot");
+  }
+  if (!FRAGMENTS.has(name)) {
+    node = { id: uid(), kind: "unknown", name, raw: `${name}(${args.join(",")})` };
+  } else {
+    node = buildFromArgs(name, args);
+  }
   for (let w = wrappers.length - 1; w >= 0; w--) {
     node = { id: uid(), kind: "wrap", wrap: wrappers[w]!, child: node };
   }

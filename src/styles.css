@@ -120,23 +120,6 @@
   p {
     text-wrap: pretty;
   }
-
-  .android-nav {
-    display: flex;
-    align-items: stretch;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-
-  .android-actions > div {
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-  }
-
-  @media (max-width: 1023px) {
-    [data-sonner-toaster] {
-      bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px)) !important;
-    }
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

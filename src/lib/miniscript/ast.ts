@@ -13,7 +13,8 @@ export type MsNode =
   | { id: string; kind: "and_v" | "and_b"; left: MsNode; right: MsNode }
   | { id: string; kind: "andor"; x: MsNode; y: MsNode; z: MsNode }
   | { id: string; kind: "or_i" | "or_d" | "or_c" | "or_b"; left: MsNode; right: MsNode }
-  | { id: string; kind: "wrap"; wrap: WrapCode; child: MsNode };
+  | { id: string; kind: "wrap"; wrap: WrapCode; child: MsNode }
+  | { id: string; kind: "unknown"; name: string; raw: string };
 
 export type BinaryKind = "and_v" | "and_b" | "or_i" | "or_d" | "or_c" | "or_b";
 
@@ -174,5 +175,7 @@ export function cloneWithIds(node: MsNode): MsNode {
       };
     case "wrap":
       return { id: uid(), kind: "wrap", wrap: node.wrap, child: cloneWithIds(node.child) };
+    case "unknown":
+      return { ...node, id: uid() };
   }
 }
