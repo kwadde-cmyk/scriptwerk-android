@@ -30,6 +30,7 @@ import { Label } from "@/components/ui/label";
 import { useT } from "@/lib/use-t";
 import { localizeMessage } from "@/lib/i18n";
 import { CopyButton, Copyable } from "@/components/copy-button";
+import { AddressLine } from "@/components/address-qr";
 import { UtxoScanPanel } from "@/components/utxo-scan";
 import { Usb } from "lucide-react";
 import { toast } from "sonner";
@@ -522,16 +523,22 @@ function AddressCheckPanel({
                   <td className="py-0.5 pr-2 align-top">{r.index}</td>
                   <td className="py-0.5 pr-2 align-top">{r.kind === "change" ? t("hw.change") : t("hw.receive")}</td>
                   <td className="max-w-[9rem] py-0.5 pr-2 align-top">
-                    <span className="inline-flex max-w-full items-start gap-0.5">
-                      <span className="min-w-0 break-all">{r.ledgerError || r.ledger || "—"}</span>
-                      {r.ledger ? <CopyButton value={r.ledger} /> : null}
-                    </span>
+                    {r.ledgerError ? (
+                      <span className="break-all">{r.ledgerError}</span>
+                    ) : r.ledger ? (
+                      <AddressLine address={r.ledger} label={`${t(r.kind === "change" ? "hw.change" : "hw.receive")} ${r.index}`} />
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="max-w-[9rem] py-0.5 pr-2 align-top">
-                    <span className="inline-flex max-w-full items-start gap-0.5">
-                      <span className="min-w-0 break-all">{r.coreError || r.core || "—"}</span>
-                      {r.core ? <CopyButton value={r.core} /> : null}
-                    </span>
+                    {r.coreError ? (
+                      <span className="break-all">{r.coreError}</span>
+                    ) : r.core ? (
+                      <AddressLine address={r.core} label={`${t(r.kind === "change" ? "hw.change" : "hw.receive")} ${r.index}`} />
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="py-0.5 align-top">{r.match ? t("hw.checkMatch") : t("hw.checkMiss")}</td>
                 </tr>

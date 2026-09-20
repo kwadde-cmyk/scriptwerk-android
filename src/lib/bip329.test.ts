@@ -4,6 +4,7 @@ import {
   asStoredLabels,
   buildBip329Export,
   coinLabel,
+  coinLabelSource,
   labelKey,
   mergeLabels,
   parseBip329,
@@ -67,6 +68,30 @@ describe("BIP-329", () => {
     });
     assert.equal(coinLabel(labels, "aa", 0, "bc1qaa"), "That coin");
     assert.equal(coinLabel(labels, "bb", 1, "bc1qaa"), "Rent");
+    const src = coinLabelSource(labels, "aa", 0, "bc1qaa");
+    assert.equal(src.type, "output");
+    assert.equal(src.ref, "aa:0");
+  });
+
+  it("accepts type aliases and tag fields", () => {
+    const hit = parseBip329(JSON.stringify({ type: "address", ref: "BC1QZZ", tag: "Shop" }));
+    assert.equal(hit.records[0]?.type, "addr");
+    assert.equal(hit.records[0]?.ref, "bc1qzz");
+    assert.equal(hit.records[0]?.label, "Shop");
+    const utxo = parseBip329(JSON.stringify({ type: "utxo", ref: "FF:2", name: "Coin" }));
+    assert.equal(utxo.records[0]?.type, "output");
+    assert.equal(utxo.records[0]?.ref, "ff:2");
+    assert.equal(utxo.records[0]?.label, "Coin");
+  });
+
+  it("overwrites an inherited address label with an output label", () => {
+    const labels = storedFromRecords([{ type: "addr", ref: "bc1qaa", label: "Rent" }]);
+    const next = mergeLabels(
+      labels,
+      storedFromRecords([{ type: "output", ref: "aa:0", label: "This coin" }]),
+    );
+    assert.equal(coinLabel(next, "aa", 0, "bc1qaa"), "This coin");
+    assert.equal(coinLabel(next, "bb", 1, "bc1qaa"), "Rent");
   });
 
   it("exports labeled addresses, outputs and xpubs", () => {

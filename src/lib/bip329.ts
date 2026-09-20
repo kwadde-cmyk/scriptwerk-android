@@ -26,6 +26,24 @@ export function isBip329Type(v: unknown): v is Bip329Type {
   return typeof v === "string" && (BIP329_TYPES as readonly string[]).includes(v);
 }
 
+const TYPE_ALIAS: Record<string, Bip329Type> = {
+  addr: "addr",
+  address: "addr",
+  tx: "tx",
+  transaction: "tx",
+  pubkey: "pubkey",
+  input: "input",
+  output: "output",
+  utxo: "output",
+  outpoint: "output",
+  xpub: "xpub",
+};
+
+export function coerceBip329Type(v: unknown): Bip329Type | null {
+  if (typeof v !== "string") return null;
+  return TYPE_ALIAS[v.trim().toLowerCase()] ?? null;
+}
+
 export function normalizeBip329Ref(type: Bip329Type, ref: string): string {
   const r = ref.trim();
   if (type === "addr") return r.toLowerCase();
@@ -40,16 +58,17 @@ export function labelKey(type: Bip329Type, ref: string): string {
 export function asStoredLabel(v: unknown): StoredLabel | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
-  if (!isBip329Type(o.type)) return null;
+  const type = coerceBip329Type(o.type);
+  if (!type) return null;
   const ref = String(o.ref ?? "").trim();
   if (!ref) return null;
-  const label = String(o.label ?? "").trim();
+  const label = String(o.label ?? o.tag ?? o.name ?? "").trim();
   const spendable = typeof o.spendable === "boolean" ? o.spendable : undefined;
   if (!label && spendable === undefined) return null;
   const origin = String(o.origin ?? "").trim();
   return {
-    type: o.type,
-    ref: normalizeBip329Ref(o.type, ref),
+    type,
+    ref: normalizeBip329Ref(type, ref),
     label,
     origin: origin || undefined,
     spendable,
@@ -72,12 +91,13 @@ function asRecord(v: unknown): Bip329Record | null {
   if (!stored) {
     if (!v || typeof v !== "object") return null;
     const o = v as Record<string, unknown>;
-    if (!isBip329Type(o.type)) return null;
+    const type = coerceBip329Type(o.type);
+    if (!type) return null;
     const ref = String(o.ref ?? "").trim();
     if (!ref) return null;
     return {
-      type: o.type,
-      ref: normalizeBip329Ref(o.type, ref),
+      type,
+      ref: normalizeBip329Ref(type, ref),
       origin: String(o.origin ?? "").trim() || undefined,
       value: Number.isFinite(Number(o.value)) ? Number(o.value) : undefined,
       height: Number.isFinite(Number(o.height)) ? Number(o.height) : undefined,
@@ -179,18 +199,33 @@ export function labelText(
   return lookupLabel(labels, type, ref)?.label ?? "";
 }
 
+export function coinLabelSource(
+  labels: Record<string, StoredLabel>,
+  txid: string,
+  vout: number,
+  address?: string,
+): { type: Bip329Type; ref: string; label: string } {
+  const tx = txid.trim();
+  const outRef = `${tx}:${vout}`;
+  const output = labelText(labels, "output", outRef);
+  if (output) return { type: "output", ref: outRef, label: output };
+  const txLabel = labelText(labels, "tx", tx);
+  if (txLabel) return { type: "tx", ref: tx, label: txLabel };
+  const addr = (address || "").trim();
+  if (addr) {
+    const a = labelText(labels, "addr", addr);
+    if (a) return { type: "addr", ref: addr, label: a };
+  }
+  return { type: "output", ref: outRef, label: "" };
+}
+
 export function coinLabel(
   labels: Record<string, StoredLabel>,
   txid: string,
   vout: number,
   address?: string,
 ): string {
-  const output = labelText(labels, "output", `${txid}:${vout}`);
-  if (output) return output;
-  const tx = labelText(labels, "tx", txid);
-  if (tx) return tx;
-  if (address) return labelText(labels, "addr", address);
-  return "";
+  return coinLabelSource(labels, txid, vout, address).label;
 }
 
 export function buildBip329Export(opts: {

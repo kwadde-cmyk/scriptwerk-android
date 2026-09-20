@@ -450,7 +450,14 @@ export const useStudio = create<StudioState>()(
         if (!trimmed) {
           delete labels[key];
         } else {
-          labels[key] = { type, ref: key.slice(type.length + 1), label: trimmed };
+          const prev = labels[key];
+          labels[key] = {
+            type,
+            ref: key.slice(type.length + 1),
+            label: trimmed,
+            origin: prev?.origin,
+            spendable: prev?.spendable,
+          };
         }
         set({ labels });
       },

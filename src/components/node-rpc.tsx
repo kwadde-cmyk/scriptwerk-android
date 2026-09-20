@@ -20,10 +20,22 @@ import { Badge } from "@/components/ui/badge";
 import { useT } from "@/lib/use-t";
 import { localizeMessage } from "@/lib/i18n";
 import { CopyButton } from "@/components/copy-button";
+import { AddressLine } from "@/components/address-qr";
 import { UtxoScanPanel } from "@/components/utxo-scan";
 import { Loader2, Server } from "lucide-react";
 import { toast } from "sonner";
-import { defaultRpcPort, hostElectrumInfo, hostProxyAvailable, hostProxyInfo, isLanIpUrl, looksLikeStartos, normalizeRpcUrl, setUseHostProxy } from "@/lib/bitcoind/rpc";
+import {
+  defaultRpcPort,
+  deriveAddressRange,
+  hostElectrumInfo,
+  hostProxyAvailable,
+  hostProxyInfo,
+  isLanIpUrl,
+  looksLikeStartos,
+  normalizeRpcUrl,
+  setUseHostProxy,
+} from "@/lib/bitcoind/rpc";
+import { descriptorForBranch } from "@/lib/hw/address-check";
 
 export function NodeButton() {
   const { t } = useT();
@@ -377,6 +389,7 @@ function NodeDialogBody() {
         {bridge === "needed" || bridge === "on" ? <BridgePanel nodeUrl={nodeUrl} /> : null}
         {trace ? <TracePanel /> : null}
         {lastCheck ? <CheckResult /> : null}
+        <DeriveAddressBox />
       </form>
     </DialogContent>
   );
@@ -416,6 +429,7 @@ export function NodeCheckCard() {
         <p className="text-xs text-fg-muted">{t("node.needConn")}</p>
         {checkBtn}
         {error ? <p className="text-xs text-danger">{localizeMessage(locale, error)}</p> : null}
+        <DeriveAddressBox />
       </section>
     );
   }
@@ -430,6 +444,7 @@ export function NodeCheckCard() {
           {checkBtn}
         </div>
         {lastCheck ? <CheckResult bare /> : null}
+        <DeriveAddressBox />
       </div>
     </section>
   );
@@ -589,6 +604,101 @@ function TracePanel() {
   );
 }
 
+function DeriveAddressBox() {
+  const { t, locale } = useT();
+  const compiled = useStudio(compiledForStudio);
+  const status = useBitcoind((s) => s.status);
+  const demo = useBitcoind((s) => s.demo);
+  const [kind, setKind] = useState<"receive" | "change">("receive");
+  const [index, setIndex] = useState(0);
+  const [addr, setAddr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const live = status === "ready" && !demo;
+
+  async function run() {
+    if (!compiled?.ok) {
+      setErr(t("node.err.empty"));
+      return;
+    }
+    if (!live) {
+      setErr(t("node.err.demoDerive"));
+      return;
+    }
+    const i = Math.max(0, Math.min(999999, Math.floor(Number(index) || 0)));
+    setIndex(i);
+    setBusy(true);
+    setErr(null);
+    try {
+      const node = useBitcoind.getState();
+      const branch = descriptorForBranch(compiled.descriptor, kind === "change" ? 1 : 0);
+      const list = await deriveAddressRange(
+        { url: node.url, username: node.username, password: node.password },
+        branch,
+        i,
+        i,
+      );
+      const hit = list[0]?.trim() ?? "";
+      if (!hit) throw new Error("node.err.derive");
+      setAddr(hit);
+    } catch (e) {
+      setAddr("");
+      setErr(localizeMessage(locale, e instanceof Error ? e.message : "node.err.derive"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-border bg-elevated/40 px-2.5 py-2">
+      <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("node.derive.title")}</p>
+      <p className="text-2xs text-pretty text-fg-muted">{t("node.derive.hint")}</p>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="flex gap-1" role="group" aria-label={t("node.derive.kind")}>
+          {(["receive", "change"] as const).map((id) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={kind === id}
+              onClick={() => setKind(id)}
+              className={
+                kind === id
+                  ? "h-9 rounded-full bg-primary px-3 text-xs text-primary-foreground"
+                  : "h-9 rounded-full border border-border px-3 text-xs text-fg-muted hover:bg-muted hover:text-fg"
+              }
+            >
+              {t(`hw.${id}`)}
+            </button>
+          ))}
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="derive-index">{t("node.derive.index")}</Label>
+          <Input
+            id="derive-index"
+            type="number"
+            min={0}
+            max={999999}
+            value={index}
+            onChange={(e) => setIndex(Number(e.target.value))}
+            className="w-24 font-mono text-xs"
+          />
+        </div>
+        <Button type="button" size="sm" disabled={busy || !compiled?.ok} onClick={() => void run()}>
+          {busy ? t("node.derive.working") : t("node.derive.run")}
+        </Button>
+      </div>
+      {err ? <p className="text-2xs text-danger">{err}</p> : null}
+      {addr ? (
+        <AddressLine
+          address={addr}
+          label={`${t(`hw.${kind}`)} ${index}`}
+          textClassName="text-2xs text-fg"
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function CheckResult({ bare = false }: { bare?: boolean }) {
   const { t } = useT();
   const lastCheck = useBitcoind((s) => s.lastCheck);
@@ -626,9 +736,10 @@ function CheckResult({ bare = false }: { bare?: boolean }) {
       </p>
       {lastCheck.addresses.length ? (
         <ul className="mt-2 space-y-0.5">
-          {lastCheck.addresses.map((a) => (
-            <li key={a}>
-              <ClipText value={a} className="text-2xs text-fg-subtle" copy />
+          {lastCheck.addresses.map((a, i) => (
+            <li key={a} className="flex items-center gap-2">
+              <span className="w-6 shrink-0 font-mono text-2xs text-fg-subtle">{i}</span>
+              <AddressLine address={a} label={`${t("hw.receive")} ${i}`} />
             </li>
           ))}
         </ul>

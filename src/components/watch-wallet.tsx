@@ -18,16 +18,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CopyButton } from "@/components/copy-button";
+import { AddressLine } from "@/components/address-qr";
 import { AmountText, AmountUnitSwitch } from "@/components/amount";
 import { FilePick } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
 import { localizeMessage, numberLocale } from "@/lib/i18n";
 import { toast } from "sonner";
-import { Clock, Download, Lock, Tag, Unlock } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, Download, Lock, Tag, Unlock } from "lucide-react";
 import { PolicyNameHeading, usePolicyTitle } from "@/components/policy-title";
 import { cn } from "@/lib/utils";
 
-type CoinFilter = "all" | "now" | "later" | "unconfirmed";
+type CoinSort = "age" | "size" | "addr" | "tag";
 
 export function WatchWalletPanel() {
   const { t, locale } = useT();
@@ -52,7 +53,8 @@ export function WatchWalletPanel() {
   const ready = status === "ready" && !demo;
   const [count, setCount] = useState(20);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<CoinFilter>("all");
+  const [sort, setSort] = useState<CoinSort>("age");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const descriptor = compiled?.ok ? compiled.descriptor : "";
   const checksum = descriptor ? checksumOf(descriptor) : "";
@@ -60,31 +62,62 @@ export function WatchWalletPanel() {
 
   const coins = useMemo(() => {
     const tip = snap?.height ?? 0;
-    const rows = (snap?.unspents ?? []).map((u) => ({
-      u,
-      status: evaluateCoinStatus({
-        height: u.height,
-        tip,
-        stages,
-        reuse: reuseKeys,
-        root,
-      }),
-      label: coinLabel(labels, u.txid, u.vout, u.address),
-    }));
-    rows.sort((a, b) => {
-      if (!a.u.height && b.u.height) return 1;
-      if (a.u.height && !b.u.height) return -1;
-      return a.u.height - b.u.height || b.u.amount - a.u.amount;
+    const meta = new Map((snap?.addresses ?? []).map((a) => [a.address, a]));
+    const rows = (snap?.unspents ?? []).map((u) => {
+      const hit = meta.get((u.address || "").trim());
+      return {
+        u,
+        status: evaluateCoinStatus({
+          height: u.height,
+          tip,
+          stages,
+          reuse: reuseKeys,
+          root,
+        }),
+        label: coinLabel(labels, u.txid, u.vout, u.address),
+        kind: hit?.kind,
+        index: hit?.index,
+      };
     });
     return rows;
   }, [snap, stages, reuseKeys, root, labels]);
 
-  const filtered = coins.filter((c) => {
-    if (filter === "now") return c.status.spendable;
-    if (filter === "later") return c.status.state === "later" || c.status.state === "unknown";
-    if (filter === "unconfirmed") return c.status.state === "unconfirmed";
-    return true;
-  });
+  const sorted = useMemo(() => {
+    const list = [...coins];
+    const dir = sortDir === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      let d = 0;
+      if (sort === "age") {
+        const ah = a.u.height > 0 ? a.u.height : Number.POSITIVE_INFINITY;
+        const bh = b.u.height > 0 ? b.u.height : Number.POSITIVE_INFINITY;
+        d = ah - bh;
+      } else if (sort === "size") {
+        d = a.u.amount - b.u.amount;
+      } else if (sort === "addr") {
+        const ak = a.kind === "change" ? 1 : 0;
+        const bk = b.kind === "change" ? 1 : 0;
+        d = ak - bk || (a.index ?? 1e9) - (b.index ?? 1e9);
+      } else {
+        const al = a.label.trim();
+        const bl = b.label.trim();
+        if (!al && bl) d = 1;
+        else if (al && !bl) d = -1;
+        else d = al.localeCompare(bl, undefined, { numeric: true, sensitivity: "base" });
+      }
+      if (d === 0) d = a.u.txid.localeCompare(b.u.txid) || a.u.vout - b.u.vout;
+      return d * dir;
+    });
+    return list;
+  }, [coins, sort, sortDir]);
+
+  function pickSort(id: CoinSort) {
+    if (sort === id) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSort(id);
+    setSortDir(id === "size" ? "desc" : "asc");
+  }
 
   const used = snap?.addresses.filter((a) => a.coins > 0) ?? [];
   const unused = (snap?.addresses.filter((a) => a.coins === 0) ?? []).slice(0, 8);
@@ -99,13 +132,6 @@ export function WatchWalletPanel() {
     }
     return map;
   }, [snap]);
-
-  const counts = {
-    all: coins.length,
-    now: coins.filter((c) => c.status.spendable).length,
-    later: coins.filter((c) => c.status.state === "later" || c.status.state === "unknown").length,
-    unconfirmed: coins.filter((c) => c.status.state === "unconfirmed").length,
-  };
 
   async function run() {
     if (!ready || !compiled?.ok) return;
@@ -260,50 +286,50 @@ export function WatchWalletPanel() {
         <section>
           <div className="mb-2 flex items-center justify-between gap-2">
             <h3 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.coins")}</h3>
-            <span className="font-mono text-2xs text-fg-muted">{filtered.length}/{coins.length}</span>
+            <span className="font-mono text-2xs text-fg-muted">{sorted.length}</span>
           </div>
           {frozen ? <p className="mb-2 text-2xs text-fg-muted">{t("wallet.frozenSpend")}</p> : null}
-          <div className="mb-3 flex flex-wrap gap-1.5">
+          <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label={t("wallet.sort")}>
             {(
               [
-                ["all", "wallet.filterAll"],
-                ["now", "wallet.filterNow"],
-                ["later", "wallet.filterLocked"],
-                ["unconfirmed", "wallet.filterMempool"],
+                ["age", "wallet.sortAge"],
+                ["size", "wallet.sortSize"],
+                ["addr", "wallet.sortAddr"],
+                ["tag", "wallet.sortTag"],
               ] as const
-            ).map(([id, key]) => (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={filter === id}
-                onClick={() => setFilter(id)}
-                className={cn(
-                  "min-h-9 rounded-full px-3 text-xs",
-                  filter === id
-                    ? "bg-primary text-primary-foreground"
-                    : "border border-border text-fg-muted hover:bg-muted hover:text-fg",
-                )}
-              >
-                {t(key)}
-                <span className="ml-1.5 font-mono text-2xs opacity-70">{counts[id]}</span>
-              </button>
-            ))}
+            ).map(([id, key]) => {
+              const active = sort === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => pickSort(id)}
+                  className={cn(
+                    "inline-flex min-h-9 items-center gap-1 rounded-full px-3 text-xs",
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border text-fg-muted hover:bg-muted hover:text-fg",
+                  )}
+                >
+                  {t(key)}
+                  {active ? (sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : null}
+                </button>
+              );
+            })}
           </div>
-          {filtered.length ? (
+          {sorted.length ? (
             <ul className="space-y-1.5">
-              {filtered.map((row) => {
-                const meta = snap?.addresses.find((a) => a.address === row.u.address);
-                return (
-                  <CoinRow
-                    key={`${row.u.txid}:${row.u.vout}`}
-                    hit={row.u}
-                    status={row.status}
-                    label={row.label}
-                    kind={meta?.kind}
-                    index={meta?.index}
-                  />
-                );
-              })}
+              {sorted.map((row) => (
+                <CoinRow
+                  key={`${row.u.txid}:${row.u.vout}`}
+                  hit={row.u}
+                  status={row.status}
+                  label={row.label}
+                  kind={row.kind}
+                  index={row.index}
+                />
+              ))}
             </ul>
           ) : (
             <p className="text-2xs text-fg-muted">{t("wallet.noCoins")}</p>
@@ -374,7 +400,6 @@ function CoinRow({
 }) {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
-  const labels = useStudio((s) => s.labels);
   const next = status.next;
   const spendLabel =
     status.state === "now"
@@ -388,7 +413,6 @@ function CoinRow({
           ? t("wallet.unconf")
           : t("wallet.spendUnknown");
   const addr = hit.address || "";
-  const addrLabel = addr ? labelText(labels, "addr", addr) : "";
   const Icon = status.spendable ? Unlock : status.state === "later" ? Lock : Clock;
 
   return (
@@ -450,18 +474,24 @@ function CoinRow({
             {kind ? ` · ${t(`wallet.${kind}`)}${index != null ? ` ${index}` : ""}` : ""}
           </p>
           {addr ? (
-            <p className="font-mono text-2xs break-all text-fg">
-              {shortId(addr)}
-              {label ? <span className="ml-1.5 font-sans text-fg-muted">{label}</span> : null}
-            </p>
+            <div className="space-y-0.5">
+              <AddressLine
+                address={addr}
+                label={label || (kind ? `${t(`wallet.${kind}`)} ${index ?? ""}`.trim() : undefined)}
+                textClassName="text-2xs text-fg"
+              />
+              {label ? <p className="font-sans text-2xs text-fg-muted">{label}</p> : null}
+            </div>
+          ) : label ? (
+            <p className="font-sans text-2xs text-fg-muted">{label}</p>
           ) : null}
           <p className="font-mono text-2xs break-all text-fg-subtle">
             {shortId(hit.txid)}:{hit.vout}
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-0.5">
-          {addr ? <LabelEdit type="addr" refValue={addr} current={addrLabel} /> : null}
-          <CopyButton value={addr || hit.txid} />
+          <LabelEdit type="output" refValue={`${hit.txid}:${hit.vout}`} current={label} />
+          <CopyButton value={`${hit.txid}:${hit.vout}`} />
         </div>
       </div>
     </li>
@@ -505,11 +535,12 @@ function AddrRow({
             )}
             {label ? <span className="text-2xs text-fg">{label}</span> : null}
           </div>
-          <p className="mt-0.5 font-mono text-2xs break-all text-fg">{address}</p>
+          <p className="mt-0.5">
+            <AddressLine address={address} label={`${kind} ${index}`} textClassName="text-2xs text-fg" />
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           <LabelEdit type="addr" refValue={address} current={label} />
-          <CopyButton value={address} />
         </div>
       </div>
       {coins.length ? (
@@ -546,7 +577,13 @@ function LabelEdit({
 
   function save(e?: FormEvent) {
     e?.preventDefault();
-    setLabel(type, refValue, draft);
+    const next = draft.trim();
+    if (next !== current.trim()) setLabel(type, refValue, next);
+    setOpen(false);
+  }
+
+  function cancel() {
+    setDraft(current);
     setOpen(false);
   }
 
@@ -580,12 +617,11 @@ function LabelEdit({
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
-            setDraft(current);
-            setOpen(false);
+            cancel();
           }
         }}
         placeholder={t("wallet.labelAdd")}
-        className="h-9 w-28 px-2 text-xs"
+        className="h-9 w-36 px-2 text-xs"
         aria-label={t("wallet.label")}
       />
     </form>
