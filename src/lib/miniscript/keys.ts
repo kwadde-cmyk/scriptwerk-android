@@ -210,6 +210,14 @@ export function blocksWhen(n: number, locale: Locale = "de"): string {
   });
 }
 
+export function lockWhen(lock: "older" | "after", n: number, locale: Locale = "de"): string {
+  if (n <= 0) return t(locale, "time.now");
+  if (lock === "after") {
+    return t(locale, "time.afterHeight", { n: n.toLocaleString(numberLocale(locale)) });
+  }
+  return blocksWhen(n, locale);
+}
+
 export interface ParsedKeyExpr {
   kind: "alias" | "origin" | "xpub";
   alias: string | null;

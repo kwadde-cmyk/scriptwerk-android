@@ -662,9 +662,12 @@ export function NodeAutoSync() {
   useEffect(() => {
     if (status !== "ready" || demo || !desc || !cs) {
       if (status !== "ready") last.current = "";
+      const st = useBitcoind.getState();
+      if (st.lastWatch && (!cs || st.lastWatch.checksum !== cs)) st.setLastWatch(null);
       return;
     }
     const st = useBitcoind.getState();
+    if (st.lastWatch && st.lastWatch.checksum !== cs) st.setLastWatch(null);
     if (last.current === cs) return;
     const checkHit = st.lastCheck?.exportChecksum === cs || st.lastCheck?.checksum === cs;
     const watchHit = st.lastWatch?.checksum === cs;

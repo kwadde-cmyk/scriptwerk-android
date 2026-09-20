@@ -1,15 +1,17 @@
 import type { MsNode } from "./ast.ts";
-import { blocksToHuman, blocksWhen, displayKeyToken, type KeyEntry } from "./keys.ts";
+import { blocksToHuman, lockWhen, displayKeyToken, type KeyEntry } from "./keys.ts";
 import { numberLocale, t, type Locale } from "../i18n.ts";
 
 export interface SpendPath {
   delay: number;
+  lock?: "older" | "after";
   label: string;
   detail: string;
 }
 
 export interface SpendGroup {
   delay: number;
+  lock?: "older" | "after";
   paths: SpendPath[];
 }
 
@@ -30,7 +32,7 @@ export function explainPolicy(
   const groups = groupByDelay(paths);
   const narrative = groups.map((g) =>
     t(locale, "explain.when", {
-      when: blocksWhen(g.delay, locale),
+      when: lockWhen(g.lock ?? "older", g.delay, locale),
       body: g.paths.map((p) => p.label).join(t(locale, "explain.or")),
     }),
   );
@@ -58,15 +60,19 @@ export function explainPolicy(
 }
 
 export function groupByDelay(paths: SpendPath[]): SpendGroup[] {
-  const map = new Map<number, SpendPath[]>();
+  const map = new Map<string, SpendGroup>();
   for (const p of paths) {
-    const list = map.get(p.delay) ?? [];
-    list.push(p);
-    map.set(p.delay, list);
+    const lock = p.lock === "after" ? "after" : "older";
+    const key = `${lock}|${p.delay}`;
+    const cur = map.get(key);
+    if (cur) cur.paths.push(p);
+    else map.set(key, { delay: p.delay, lock, paths: [p] });
   }
-  return [...map.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([delay, items]) => ({ delay, paths: items }));
+  return [...map.values()].sort((a, b) => {
+    const ra = a.delay <= 0 ? 0 : a.lock === "after" ? 2 : 1;
+    const rb = b.delay <= 0 ? 0 : b.lock === "after" ? 2 : 1;
+    return ra - rb || a.delay - b.delay;
+  });
 }
 
 function flatten(
@@ -99,7 +105,8 @@ function flatten(
     case "after":
       return [
         {
-          delay,
+          delay: node.n,
+          lock: "after",
           label: t(locale, "explain.afterBlock", { n: node.n.toLocaleString(numberLocale(locale)) }),
           detail: `after(${node.n})`,
         },
@@ -150,6 +157,7 @@ function andCombine(a: SpendPath[], b: SpendPath[], locale: Locale): SpendPath[]
     for (const y of b) {
       out.push({
         delay: Math.max(x.delay, y.delay),
+        lock: x.lock === "after" || y.lock === "after" ? "after" : x.lock ?? y.lock,
         label: joinAnd(x.label, y.label, lock),
         detail: `${x.detail} ∧ ${y.detail}`,
       });

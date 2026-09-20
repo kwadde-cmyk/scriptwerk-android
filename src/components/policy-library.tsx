@@ -24,6 +24,7 @@ export function PolicyLibraryButton() {
   const policyName = useStudio((s) => s.policyName);
   const setPolicyName = useStudio((s) => s.setPolicyName);
   const loadSnapshot = useStudio((s) => s.loadSnapshot);
+  const markSaved = useStudio((s) => s.markSaved);
   const root = useStudio((s) => s.root);
   const keys = useStudio((s) => s.keys);
   const stages = useStudio((s) => s.stages);
@@ -48,7 +49,7 @@ export function PolicyLibraryButton() {
       return;
     }
     const checksum = compiled?.ok ? peekChecksum(compiled.descriptor) : "";
-    savePolicy({
+    const saved = savePolicy({
       name,
       checksum,
       network,
@@ -67,19 +68,22 @@ export function PolicyLibraryButton() {
         liftWarning,
       },
     });
+    markSaved(saved.id);
     refresh();
     toast.success(t("library.saved"));
   }
 
   function onLoad(p: SavedPolicy) {
-    loadSnapshot(p.snapshot);
-    setPolicyName(p.name);
+    loadSnapshot({ ...p.snapshot, policyName: p.name }, { id: p.id });
     setOpen(false);
     toast.success(t("library.loaded"));
   }
 
   function onDelete(id: string) {
     deletePolicy(id);
+    if (useStudio.getState().savedId === id) {
+      useStudio.setState({ savedId: null, cleanSig: "" });
+    }
     refresh();
   }
 
@@ -105,7 +109,7 @@ export function PolicyLibraryButton() {
           <Input
             value={policyName}
             onChange={(e) => setPolicyName(e.target.value)}
-            placeholder={t("library.name")}
+            placeholder={t("library.untitled")}
             aria-label={t("library.name")}
           />
           <Button onClick={onSave} className="shrink-0">

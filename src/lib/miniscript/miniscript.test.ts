@@ -9,7 +9,7 @@ import {
   expandAliasKeys,
 } from "./compile.ts";
 import { explainPolicy } from "./explain.ts";
-import { decodeLibrary, encodeLibrary, peekChecksum, type SavedPolicy } from "../policy-library.ts";
+import { decodeLibrary, encodeLibrary, peekChecksum, policyIsDirty, policySig, type SavedPolicy } from "../policy-library.ts";
 import { electrumHostAllowed, parseElectrumUrl, scriptPubKeyFromAddress, scripthashForAddress } from "../electrum.ts";
 import {
   applyKeyMaterial,
@@ -508,9 +508,17 @@ describe("stages", () => {
     assert.equal(recovered[0]?.k, 2);
   });
 
-  it("compiles a single hashed key as pkh", () => {
+  it("compiles a hashed key as pkh", () => {
     const { root } = compileStages([{ id: "s1", delay: 144, k: 1, keys: ["A"], hash: true }]);
     assert.equal(compileMiniscript(root), "and_v(v:pkh(A),older(144))");
+  });
+
+  it("compiles after() as an absolute lock", () => {
+    const { root } = compileStages([{ id: "s1", delay: 800000, lock: "after", k: 1, keys: ["A"] }]);
+    assert.equal(compileMiniscript(root), "and_v(v:pk(A),after(800000))");
+    const recovered = inferStages(root);
+    assert.equal(recovered[0]?.lock, "after");
+    assert.equal(recovered[0]?.delay, 800000);
   });
 
   it("compiles 2-of-2 as and_v when requested", () => {
@@ -1414,6 +1422,28 @@ describe("policy library", () => {
     assert.deepEqual(decodeLibrary("{"), []);
     assert.deepEqual(decodeLibrary('[{"name":"x"}]'), []);
   });
+
+  it("policySig ignores ids and detects edits", () => {
+    const base = {
+      policyName: "Erbe",
+      keys: [],
+      stages: [{ id: "st_1", delay: 0, k: 2, keys: ["A", "B", "C"] }],
+      reuseKeys: false,
+      nesting: "late" as const,
+      maxOlder: 65534 as const,
+      policyMode: "stages" as const,
+      originalDescriptor: "",
+    };
+    const twin = { ...base, stages: [{ id: "st_other", delay: 0, k: 2, keys: ["A", "B", "C"] }] };
+    assert.equal(policySig(base), policySig(twin));
+    assert.notEqual(policySig(base), policySig({ ...base, policyName: "Haus" }));
+    assert.equal(policyIsDirty({ ...base, savedId: null, cleanSig: policySig(base) }), true);
+    assert.equal(policyIsDirty({ ...base, savedId: "pol_1", cleanSig: policySig(base) }), false);
+    assert.equal(
+      policyIsDirty({ ...base, stages: [{ ...base.stages[0]!, delay: 144 }], savedId: "pol_1", cleanSig: policySig(base) }),
+      true,
+    );
+  });
 });
 
 describe("electrum helpers", () => {
@@ -1481,16 +1511,19 @@ describe("imported policy mode", () => {
     assert.equal(descriptorsEquivalent(hit.originalDescriptor, src), true);
   });
 
-  it("puts after() and sha256 into raw mode", () => {
-    const after = classify("wsh(and_v(v:pk(A),after(800000)))");
-    assert.equal(after.mode, "raw");
-    assert.equal(after.liftWarning, "after");
-    assert.equal(after.stages.length, 0);
-
+  it("puts sha256 into raw mode", () => {
     const hash = classify("wsh(and_v(v:pk(A),sha256(00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff)))");
     assert.equal(hash.mode, "raw");
     assert.equal(hash.liftWarning, "hashlock");
     assert.equal(liftIncompleteReason(parseAny("wsh(sha256(aa))").node, "wsh(sha256(aa))"), "hashlock");
+  });
+
+  it("lifts after() onto a stage instead of freezing", () => {
+    const after = classify("wsh(and_v(v:pk(A),after(800000)))");
+    assert.equal(after.mode, "stages");
+    assert.equal(after.stages[0]?.lock, "after");
+    assert.equal(after.stages[0]?.delay, 800000);
+    assert.equal(after.originalDescriptor, "");
   });
 
   it("rejects taproot and private material before raw mode", () => {
@@ -1568,6 +1601,21 @@ describe("coin spendability", () => {
     assert.equal(locked.next?.blocksLeft, 10000);
     const open = evaluateCoinStatus({ height: 799000, tip: 800000, root: node, stages: [] });
     assert.equal(open.state, "now");
+    assert.equal(open.spendable, true);
+  });
+
+  it("opens an after() stage at the lock height", () => {
+    const stages = [
+      { id: "s0", delay: 0, k: 2, keys: ["A", "B", "C"] },
+      { id: "s1", delay: 800000, lock: "after" as const, k: 1, keys: ["A"] },
+    ];
+    const locked = evaluateCoinStatus({ height: 790000, tip: 790000, stages });
+    assert.equal(locked.paths[0]?.open, true);
+    assert.equal(locked.paths[1]?.kind, "after");
+    assert.equal(locked.paths[1]?.open, false);
+    assert.equal(locked.paths[1]?.blocksLeft, 10000);
+    const open = evaluateCoinStatus({ height: 800000, tip: 800000, stages });
+    assert.equal(open.paths[1]?.open, true);
     assert.equal(open.spendable, true);
   });
 

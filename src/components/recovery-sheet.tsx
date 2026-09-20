@@ -6,6 +6,7 @@ import {
   keyOriginExpr,
   keyRoleLabel,
   childRoleLabel,
+  lockWhen,
   parseAccountIndex,
   shortXpub,
   type KeyChild,
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { SheetQr } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
+import { usePolicyTitle } from "@/components/policy-title";
 import { ScrollText } from "lucide-react";
 
 const addrCache = { list: [] as string[] };
@@ -96,7 +98,7 @@ export function RecoveryPrintRoot() {
 
 function RecoveryDocument({ print = false }: { print?: boolean }) {
   const { t, locale } = useT();
-  const policyName = useStudio((s) => s.policyName);
+  const { name: policyName, badge } = usePolicyTitle();
   const keys = useStudio((s) => s.keys);
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
@@ -155,7 +157,8 @@ function RecoveryDocument({ print = false }: { print?: boolean }) {
           <p className="text-[10px] tracking-[0.28em] text-neutral-600 uppercase">Scriptwerk</p>
           <h2 className="font-display text-xl font-semibold">{t("recovery.heading")}</h2>
           <p className="text-xs text-neutral-700">
-            {policyName || "Scriptwerk"} · {when}
+            {policyName}
+            {badge ? ` · ${badge}` : ""} · {when}
           </p>
         </div>
         {checksum ? (
@@ -173,10 +176,7 @@ function RecoveryDocument({ print = false }: { print?: boolean }) {
           {slots.map((s) => {
             const stage = stages[s.index - 1];
             const must = (stage?.required ?? []).map((tok) => displayKeyToken(tok, keys)).join(", ");
-            const delay =
-              s.delay <= 0
-                ? t("recovery.now")
-                : `${s.delay} ${t("recovery.blocks")}${s.delay >= 144 ? ` ≈ ${Math.round(s.delay / 144)} ${t("recovery.days")}` : ""}`;
+            const delay = lockWhen(s.lock, s.delay, locale);
             return (
               <li key={s.index}>
                 <span className="font-medium">{s.quorum}</span>

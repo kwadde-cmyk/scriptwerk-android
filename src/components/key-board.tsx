@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import {
   accountPathFrom,
   applyKeyMaterial,
-  blocksWhen,
+  lockWhen,
   childForAccount,
   childRoleLabel,
   keyIsFilled,
@@ -447,7 +447,7 @@ function KeySlotTree({
 
   function slotLine(slot: StageSignerSlot, selfRole: string): string {
     const others = slot.signers.filter((s) => s.role !== selfRole).map((s) => s.role);
-    const when = slot.delay > 0 ? blocksWhen(slot.delay, locale) : t("read.now");
+    const when = slot.delay > 0 ? lockWhen(slot.lock, slot.delay, locale) : t("read.now");
     return [t("stages.n", { n: slot.index }), ...others, slot.quorum, when].join(" · ");
   }
 

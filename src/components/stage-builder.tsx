@@ -1,13 +1,26 @@
-import { delayPresets, defaultStages, nextStageDelay, sortedMultiAllowed, stageFormula, type Stage } from "@/lib/miniscript/stages";
+import {
+  afterPresets,
+  compareStages,
+  delayPresets,
+  defaultStages,
+  MAX_AFTER,
+  nextStageSpec,
+  sortedMultiAllowed,
+  stageFormula,
+  stageLockOf,
+  type Stage,
+} from "@/lib/miniscript/stages";
 import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
-import { blocksWhen, keyIsFilled, nextKeyName, type KeyEntry } from "@/lib/miniscript/keys";
+import { lockWhen, keyIsFilled, nextKeyName, type KeyEntry } from "@/lib/miniscript/keys";
 import { uid } from "@/lib/utils";
+import { useBitcoind } from "@/store/bitcoind";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/lib/use-t";
+import { numberLocale } from "@/lib/i18n";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { PolicyStatusBanner } from "@/components/interpreter-panel";
 
@@ -21,6 +34,7 @@ export function StageBuilder() {
   const maxOlder = useStudio((s) => s.maxOlder);
   const expert = useStudio((s) => s.mode) === "expert";
   const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
+  const tip = useBitcoind((s) => s.probe?.blocks || s.lastWatch?.height || 0);
 
   const allowSorted = sortedMultiAllowed(stages);
   const pool = keys.map((k) => k.name);
@@ -34,7 +48,7 @@ export function StageBuilder() {
       setStages(defaultStages());
       return;
     }
-    const delay = nextStageDelay(stages, maxOlder);
+    const spec = nextStageSpec(stages, maxOlder, tip);
     const prev = stages[stages.length - 1];
     const names = prev?.keys.length ? [...prev.keys] : pool.slice(0, 3);
     const extra = nextKeyName([...pool, ...names]);
@@ -43,7 +57,8 @@ export function StageBuilder() {
       ...stages.map((s) => ({ ...s, sorted: false })),
       {
         id: uid("st"),
-        delay,
+        delay: spec.delay,
+        lock: spec.lock === "after" ? "after" : undefined,
         k: Math.min(prev?.k ?? 2, names.length),
         keys: names,
       },
@@ -64,7 +79,7 @@ export function StageBuilder() {
           ) : null}
           {stages
             .slice()
-            .sort((a, b) => a.delay - b.delay)
+            .sort(compareStages)
             .map((s, i) => (
               <StageCard
                 key={s.id}
@@ -76,6 +91,7 @@ export function StageBuilder() {
                 allowSorted={allowSorted}
                 expert={expert}
                 maxOlder={maxOlder}
+                tip={tip}
                 selected={selectedStageId === s.id}
                 locked={frozen}
                 onSelect={() => selectStage(s.id)}
@@ -189,6 +205,7 @@ function StageCard({
   allowSorted,
   expert,
   maxOlder,
+  tip = 0,
   selected,
   locked = false,
   onSelect,
@@ -203,6 +220,7 @@ function StageCard({
   allowSorted: boolean;
   expert: boolean;
   maxOlder: number;
+  tip?: number;
   selected: boolean;
   locked?: boolean;
   onSelect: () => void;
@@ -210,6 +228,7 @@ function StageCard({
   onRemove: () => void;
 }) {
   const { t, locale } = useT();
+  const nloc = numberLocale(locale);
   const n = stage.keys.length;
   const k = Math.min(Math.max(stage.k, 1), Math.max(n, 1));
   const byName = new Map(entries.map((e) => [e.name, e]));
@@ -297,7 +316,9 @@ function StageCard({
         >
           <span className="block text-sm font-medium">
             {t("stages.n", { n: index + 1 })}
-            <span className="ml-2 text-xs font-normal text-fg-muted">{blocksWhen(stage.delay, locale)}</span>
+            <span className="ml-2 text-xs font-normal text-fg-muted">
+              {lockWhen(stageLockOf(stage), stage.delay, locale)}
+            </span>
           </span>
           <span className="mt-1 block font-mono text-2xs text-fg-muted">{stageFormula(stage)}</span>
         </button>
@@ -516,33 +537,91 @@ function StageCard({
 
       <div className="mt-3" onClick={(e) => e.stopPropagation()}>
         <Label htmlFor={`delay-${stage.id}`}>{t("stages.timelock")}</Label>
+        <p className="mt-0.5 text-2xs text-pretty text-fg-muted">
+          {t(stageLockOf(stage) === "after" ? "stages.lockAfterHint" : "stages.lockOlderHint")}
+        </p>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            aria-pressed={stageLockOf(stage) !== "after"}
+            onClick={() => {
+              const delay = stageLockOf(stage) === "after" && stage.delay > maxOlder ? 0 : Math.min(stage.delay, maxOlder);
+              onChange({ ...stage, lock: "older", delay, sorted: delay > 0 ? false : stage.sorted });
+            }}
+            className={
+              stageLockOf(stage) !== "after"
+                ? "h-9 rounded-full bg-primary px-3 text-xs text-primary-foreground"
+                : "h-9 rounded-full border border-border px-3 text-xs text-fg-muted hover:bg-muted hover:text-fg"
+            }
+          >
+            {t("stages.lockOlder")}
+          </button>
+          <button
+            type="button"
+            aria-pressed={stageLockOf(stage) === "after"}
+            onClick={() => {
+              const delay = stageLockOf(stage) === "after" ? stage.delay : 0;
+              onChange({ ...stage, lock: "after", delay, sorted: delay > 0 ? false : stage.sorted });
+            }}
+            className={
+              stageLockOf(stage) === "after"
+                ? "h-9 rounded-full bg-primary px-3 text-xs text-primary-foreground"
+                : "h-9 rounded-full border border-border px-3 text-xs text-fg-muted hover:bg-muted hover:text-fg"
+            }
+          >
+            {t("stages.lockAfter")}
+          </button>
+        </div>
         <Input
           id={`delay-${stage.id}`}
           type="number"
           min={0}
-          max={maxOlder}
+          max={stageLockOf(stage) === "after" ? MAX_AFTER : maxOlder}
+          placeholder={stageLockOf(stage) === "after" ? t("stages.afterPlaceholder") : undefined}
           value={stage.delay}
           onChange={(e) => {
-            const delay = Math.max(0, Math.min(maxOlder, Number(e.target.value) || 0));
+            const cap = stageLockOf(stage) === "after" ? MAX_AFTER : maxOlder;
+            const delay = Math.max(0, Math.min(cap, Number(e.target.value) || 0));
             onChange({ ...stage, delay, sorted: delay > 0 ? false : stage.sorted });
           }}
           className="mt-1.5 font-mono"
         />
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {delayPresets(maxOlder).map((nDelay) => (
-            <button
-              key={nDelay}
-              type="button"
-              onClick={() => onChange({ ...stage, delay: nDelay, sorted: nDelay > 0 ? false : stage.sorted })}
-              className={
-                stage.delay === nDelay
-                  ? "h-8 rounded-full bg-muted px-2.5 text-2xs text-fg"
-                  : "h-8 rounded-full border border-border px-2.5 text-2xs text-fg-muted hover:bg-muted hover:text-fg"
-              }
-            >
-              {t(`delay.${nDelay}`)}
-            </button>
-          ))}
+          {stageLockOf(stage) === "after"
+            ? afterPresets(tip).map((nDelay) => (
+                <button
+                  key={`after-${nDelay}`}
+                  type="button"
+                  onClick={() => onChange({ ...stage, delay: nDelay, lock: "after", sorted: nDelay > 0 ? false : stage.sorted })}
+                  className={
+                    stage.delay === nDelay
+                      ? "h-8 rounded-full bg-muted px-2.5 text-2xs text-fg"
+                      : "h-8 rounded-full border border-border px-2.5 text-2xs text-fg-muted hover:bg-muted hover:text-fg"
+                  }
+                >
+                  {nDelay <= 0
+                    ? t("delay.0")
+                    : nDelay === tip
+                      ? t("stages.afterNow")
+                      : [144, 1008, 4320, 52596].includes(nDelay - tip)
+                        ? `+ ${t(`delay.${nDelay - tip}`)}`
+                        : t("stages.afterPlus", { n: (nDelay - tip).toLocaleString(nloc) })}
+                </button>
+              ))
+            : delayPresets(maxOlder).map((nDelay) => (
+                <button
+                  key={nDelay}
+                  type="button"
+                  onClick={() => onChange({ ...stage, delay: nDelay, lock: "older", sorted: nDelay > 0 ? false : stage.sorted })}
+                  className={
+                    stage.delay === nDelay
+                      ? "h-8 rounded-full bg-muted px-2.5 text-2xs text-fg"
+                      : "h-8 rounded-full border border-border px-2.5 text-2xs text-fg-muted hover:bg-muted hover:text-fg"
+                  }
+                >
+                  {t(`delay.${nDelay}`)}
+                </button>
+              ))}
         </div>
       </div>
       </fieldset>

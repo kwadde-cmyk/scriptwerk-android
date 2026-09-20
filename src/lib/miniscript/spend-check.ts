@@ -1,5 +1,5 @@
 import { displayKeyToken, baseKeyName, type KeyEntry } from "./keys.ts";
-import { describeStageSlots, type Stage } from "./stages.ts";
+import { compareStages, describeStageSlots, type Stage } from "./stages.ts";
 
 export interface SpendCoin {
   height: number;
@@ -10,6 +10,7 @@ export interface SpendStageView {
   index: number;
   stageId: string;
   delay: number;
+  lock: "older" | "after";
   quorum: string;
   confirmations: number;
   lockOpen: boolean;
@@ -67,12 +68,21 @@ export function youngestCoinHeight(heights: number[]): number {
   return Math.max(...mined);
 }
 
-function splitCoins(coins: SpendCoin[], tip: number, delay: number) {
+function splitCoins(coins: SpendCoin[], tip: number, delay: number, kind: "older" | "after" = "older") {
   const open: SpendCoin[] = [];
   const locked: { coin: SpendCoin; left: number; opensAt: number }[] = [];
   for (const coin of coins) {
     const h = Math.max(0, Math.floor(Number(coin.height) || 0));
     const conf = confirmationsAt(tip, h);
+    if (kind === "after") {
+      const n = Math.max(0, Math.floor(Number(delay) || 0));
+      if (n <= 0 || tip >= n) {
+        open.push(coin);
+        continue;
+      }
+      locked.push({ coin, left: Math.max(0, n - tip), opensAt: n });
+      continue;
+    }
     if (delay <= 0 || conf >= delay) {
       open.push(coin);
       continue;
@@ -114,7 +124,7 @@ export function evaluateSpendPaths(opts: {
       required: (s.required ?? []).map((k) => k.trim()).filter(Boolean),
     }))
     .filter((s) => s.keys.length > 0)
-    .sort((a, b) => a.delay - b.delay || a.id.localeCompare(b.id));
+    .sort(compareStages);
   const total = coins.reduce((s, c) => s + (Number(c.amount) || 0), 0);
 
   const stages = slots.map((slot, i) => {
@@ -130,29 +140,41 @@ export function evaluateSpendPaths(opts: {
     const restHave = rest.filter((s) => haveSet.has(s.token)).length;
     const restPool = rest.filter((s) => !haveSet.has(s.token)).map((s) => label(s.token));
     const canSign = missingMust.length === 0 && restHave >= restNeed;
+    const after = slot.lock === "after";
     const split = coins.length
-      ? splitCoins(coins, tip, slot.delay)
+      ? splitCoins(coins, tip, slot.delay, slot.lock)
       : { amountNow: 0, nextAmount: 0, nextBlocks: 0, nextOpensAt: 0, openCount: 0 };
-    const lockOpen = coins.length ? split.amountNow > 0 || slot.delay <= 0 : slot.delay <= 0 || conf >= slot.delay;
+    const lockOpen = coins.length
+      ? split.amountNow > 0 || slot.delay <= 0
+      : slot.delay <= 0
+        ? true
+        : after
+          ? tip >= slot.delay
+          : conf >= slot.delay;
     const blocksLeft = coins.length
       ? lockOpen
         ? 0
         : split.nextBlocks
       : lockOpen
         ? 0
-        : Math.max(0, slot.delay - conf);
+        : after
+          ? Math.max(0, slot.delay - tip)
+          : Math.max(0, slot.delay - conf);
     const opensAt = !lockOpen && coins.length && split.nextOpensAt
       ? split.nextOpensAt
       : slot.delay <= 0
         ? tip
-        : coinHeight > 0
-          ? coinHeight + slot.delay - 1
-          : tip + slot.delay;
+        : after
+          ? slot.delay
+          : coinHeight > 0
+            ? coinHeight + slot.delay - 1
+            : tip + slot.delay;
     const canSpendNow = coins.length ? canSign && split.amountNow > 0 : canSign && lockOpen;
     return {
       index: slot.index,
       stageId: stage?.id ?? slot.index.toString(),
       delay: slot.delay,
+      lock: slot.lock,
       quorum: slot.quorum,
       confirmations: conf,
       lockOpen,

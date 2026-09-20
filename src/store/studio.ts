@@ -35,6 +35,7 @@ import {
   type PolicyMode,
 } from "@/lib/miniscript/policy-mode";
 import type { PolicySnapshot } from "@/lib/policy-library";
+import { policySig } from "@/lib/policy-library";
 import { isLocale, localizeMessage, t, type Locale } from "@/lib/i18n";
 import { isAmountUnit, type AmountUnit } from "@/lib/hw/address-check";
 import {
@@ -100,7 +101,7 @@ function easyStages(stages: Stage[]): Stage[] {
     hash: false,
     andv: false,
     sorted: false,
-    delay: Math.min(s.delay, 65534),
+    delay: s.lock === "after" ? s.delay : Math.min(s.delay, 65534),
   }));
 }
 
@@ -121,6 +122,8 @@ interface StudioState {
   locale: Locale;
   amountUnit: AmountUnit;
   policyName: string;
+  savedId: string | null;
+  cleanSig: string;
   labels: Record<string, StoredLabel>;
   importError: string | null;
   past: Snapshot[];
@@ -132,9 +135,10 @@ interface StudioState {
   setLocale: (locale: Locale) => void;
   setAmountUnit: (unit: AmountUnit) => void;
   setPolicyName: (name: string) => void;
+  markSaved: (id: string) => void;
   setLabel: (type: Bip329Type, ref: string, label: string) => void;
   importBip329: (text: string) => { ok: true; n: number } | { ok: false; error: string };
-  loadSnapshot: (snap: PolicySnapshot) => void;
+  loadSnapshot: (snap: PolicySnapshot, meta?: { id?: string }) => void;
   select: (id: string | null) => void;
   selectStage: (id: string | null) => void;
   undo: () => void;
@@ -204,6 +208,8 @@ function finishImportedPolicy(
     reuseKeys: classified.reuseKeys,
     nesting: classified.nesting,
     selectedStageId: null as string | null,
+    savedId: null as string | null,
+    cleanSig: "",
   };
 }
 
@@ -366,7 +372,9 @@ export const useStudio = create<StudioState>()(
       liftWarning: "",
       locale: "de",
       amountUnit: "auto",
-      policyName: "Scriptwerk",
+      policyName: "",
+      savedId: null,
+      cleanSig: "",
       labels: {},
       importError: null,
       past: [],
@@ -418,7 +426,9 @@ export const useStudio = create<StudioState>()(
         const cur = get();
         if (policyIsFrozen(cur.policyMode)) return;
         const { stages, keys, network, reuseKeys, nesting } = cur;
-        const next = stages.map((s) => ({ ...s, delay: Math.min(s.delay, maxOlder) }));
+        const next = stages.map((s) =>
+          s.lock === "after" ? s : { ...s, delay: Math.min(s.delay, maxOlder) },
+        );
         if (stages.length) {
           mutate({ maxOlder, ...applyStageTree(next, keys, network, reuseKeys, nesting) });
           return;
@@ -428,6 +438,11 @@ export const useStudio = create<StudioState>()(
       setLocale: (locale) => set({ locale: isLocale(locale) ? locale : "de" }),
       setAmountUnit: (unit) => set({ amountUnit: isAmountUnit(unit) ? unit : "auto" }),
       setPolicyName: (name) => set({ policyName: name.slice(0, 80) }),
+      markSaved: (id) => {
+        const trimmed = id.trim();
+        if (!trimmed) return;
+        set({ savedId: trimmed, cleanSig: policySig(get()) });
+      },
       setLabel: (type, ref, label) => {
         const key = labelKey(type, ref);
         const labels = { ...get().labels };
@@ -447,8 +462,9 @@ export const useStudio = create<StudioState>()(
         set({ labels: mergeLabels(get().labels, incoming) });
         return { ok: true as const, n };
       },
-      loadSnapshot: (snap) => {
+      loadSnapshot: (snap, meta) => {
         const policyMode = isPolicyMode(snap.policyMode) ? snap.policyMode : "stages";
+        const savedId = meta?.id?.trim() || null;
         mutate({
           keys: (snap.keys ?? []).map(normalizeKeyEntry),
           root: snap.root,
@@ -458,14 +474,16 @@ export const useStudio = create<StudioState>()(
           nesting: snap.nesting === "early" ? "early" : "late",
           mode: snap.mode === "expert" ? "expert" : "easy",
           maxOlder: snap.maxOlder === 65535 ? 65535 : 65534,
-          policyName: (snap.policyName || get().policyName || "Scriptwerk").slice(0, 80),
+          policyName: (snap.policyName || "").slice(0, 80),
           policyMode,
           originalDescriptor: policyIsFrozen(policyMode) ? (snap.originalDescriptor ?? "") : "",
           liftWarning: policyIsFrozen(policyMode) ? (snap.liftWarning ?? "") : "",
           selectedId: snap.root?.id ?? null,
           selectedStageId: null,
           importError: null,
+          savedId,
         });
+        set({ cleanSig: savedId ? policySig(get()) : "" });
       },
       select: (selectedId) => set({ selectedId, selectedStageId: null }),
       selectStage: (id) =>
@@ -699,6 +717,8 @@ export const useStudio = create<StudioState>()(
                 originalDescriptor: bundle.originalDescriptor || sourceFromParse(parsed),
                 liftWarning: bundle.liftWarning || "",
                 reuseKeys: bundle.reuseKeys ?? get().reuseKeys,
+                savedId: null,
+                cleanSig: "",
               });
               return;
             }
@@ -871,6 +891,9 @@ export const useStudio = create<StudioState>()(
           policyMode: "stages",
           originalDescriptor: "",
           liftWarning: "",
+          policyName: "",
+          savedId: null,
+          cleanSig: "",
           ...applyStageTree(defaultStages(), [], get().network, get().reuseKeys, get().nesting),
         }),
       rebuildAsStages: () => {
@@ -909,6 +932,8 @@ export const useStudio = create<StudioState>()(
         locale: s.locale,
         amountUnit: s.amountUnit,
         policyName: s.policyName,
+        savedId: s.savedId,
+        cleanSig: s.cleanSig,
         labels: s.labels,
         policyMode: s.policyMode,
         originalDescriptor: s.originalDescriptor,
@@ -923,7 +948,9 @@ export const useStudio = create<StudioState>()(
         if (p.maxOlder !== 65534 && p.maxOlder !== 65535) {
           next.maxOlder = next.stages.some((st) => st.delay >= 65535) ? 65535 : 65534;
         }
-        if (!next.policyName) next.policyName = "Scriptwerk";
+        if (typeof next.policyName !== "string") next.policyName = "";
+        next.savedId = typeof next.savedId === "string" && next.savedId ? next.savedId : null;
+        next.cleanSig = typeof next.cleanSig === "string" ? next.cleanSig : "";
         next.labels = asStoredLabels(next.labels);
         if (!isAmountUnit(next.amountUnit)) next.amountUnit = "auto";
         next.policyMode = isPolicyMode(next.policyMode) ? next.policyMode : "stages";

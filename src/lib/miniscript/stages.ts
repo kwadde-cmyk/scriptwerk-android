@@ -2,12 +2,16 @@ import { mapKeyStrings, mapNode, visit, type MsNode } from "./ast.ts";
 import { uid } from "../utils.ts";
 import { baseKeyName, keyRoleLabel, reuseBranchPath } from "./keys.ts";
 
+export type StageLock = "older" | "after";
+
 export interface Stage {
   id: string;
   delay: number;
+  /** Absolute CLTV height. Default / omitted is relative older() / CSV. */
+  lock?: StageLock;
+  /** Keys that must sign (AND). Remaining keys are an OR / k-of-rest. */
   k: number;
   keys: string[];
-  /** Keys that must sign (AND). Remaining keys are an OR / k-of-rest. */
   required?: string[];
   /** If true, compile sortedmulti — pubkey order does not change the script. */
   sorted?: boolean;
@@ -22,11 +26,34 @@ export const DELAY_PRESET_CORE = [0, 1, 144, 1008, 4320, 52596, 60000] as const;
 export const MAX_OLDER = 65535;
 /** Nunchuk rejects 65535; this is the compatible default. */
 export const DEFAULT_MAX_OLDER = 65534;
+/** CLTV after() below this is a block height, not a unix time. */
+export const MAX_AFTER = 499_999_999;
 
 export type MaxOlder = 65534 | 65535;
 
 export function asMaxOlder(n: number): MaxOlder {
   return n === 65535 ? 65535 : 65534;
+}
+
+export function stageLockOf(s: Pick<Stage, "lock">): StageLock {
+  return s.lock === "after" ? "after" : "older";
+}
+
+export function clampStageDelay(s: Pick<Stage, "lock" | "delay">, maxOlder: number = DEFAULT_MAX_OLDER): number {
+  const n = Math.max(0, Math.round(Number(s.delay) || 0));
+  if (stageLockOf(s) === "after") return Math.min(MAX_AFTER, n);
+  return Math.min(asMaxOlder(maxOlder), n);
+}
+
+export function compareStages(a: Stage, b: Stage): number {
+  const rank = (s: Stage) => {
+    if (clampStageDelay(s) <= 0) return 0;
+    return stageLockOf(s) === "after" ? 2 : 1;
+  };
+  const ra = rank(a);
+  const rb = rank(b);
+  if (ra !== rb) return ra - rb;
+  return clampStageDelay(a) - clampStageDelay(b) || a.id.localeCompare(b.id);
 }
 
 export function delayPresets(maxOlder: number = DEFAULT_MAX_OLDER): number[] {
@@ -35,16 +62,43 @@ export function delayPresets(maxOlder: number = DEFAULT_MAX_OLDER): number[] {
 
 export const DELAY_PRESETS = delayPresets(DEFAULT_MAX_OLDER);
 
+export function afterPresets(tip = 0): number[] {
+  const t = Math.max(0, Math.floor(Number(tip) || 0));
+  if (t <= 0) return [0];
+  const offsets = [0, 144, 1008, 4320, 52596];
+  const out: number[] = [0];
+  for (const o of offsets) {
+    const n = Math.min(MAX_AFTER, t + o);
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 export function defaultStages(): Stage[] {
   return [{ id: uid("st"), delay: 0, k: 2, keys: ["A", "B", "C"] }];
 }
 
 export function nextStageDelay(stages: Stage[], maxOlder: number = DEFAULT_MAX_OLDER): number {
   const cap = asMaxOlder(maxOlder);
-  const max = Math.max(0, ...stages.map((s) => s.delay));
+  const relatives = stages.filter((s) => stageLockOf(s) !== "after");
+  const max = Math.max(0, ...relatives.map((s) => clampStageDelay(s, cap)));
   if (max <= 0) return 52596;
   if (max < 60000) return 60000;
   return cap;
+}
+
+export function nextStageSpec(
+  stages: Stage[],
+  maxOlder: number = DEFAULT_MAX_OLDER,
+  tip = 0,
+): { lock: StageLock; delay: number } {
+  const prev = stages[stages.length - 1];
+  if (prev && stageLockOf(prev) === "after") {
+    const n = clampStageDelay(prev);
+    const base = n > 0 ? n : Math.max(0, Math.floor(Number(tip) || 0));
+    return { lock: "after", delay: base > 0 ? Math.min(MAX_AFTER, base + 52596) : 0 };
+  }
+  return { lock: "older", delay: nextStageDelay(stages, maxOlder) };
 }
 
 /** Core accepts sortedmulti only as the entire wsh() script — one unlocked multi stage. */
@@ -66,16 +120,19 @@ function cleanedStages(stages: Stage[]) {
       const keys = s.keys.map((k) => k.trim()).filter(Boolean);
       const required = (s.required ?? []).map((k) => k.trim()).filter((k) => keys.includes(k));
       const k = Math.max(1, Math.round(Number(s.k) || 1));
+      const lock = stageLockOf(s);
+      const delay = clampStageDelay({ lock, delay: s.delay }, MAX_OLDER);
       return {
         ...s,
         keys,
         k,
+        lock: lock === "after" && delay > 0 ? "after" : delay > 0 ? lock : undefined,
         required: required.length && k < keys.length ? required : undefined,
-        delay: Math.max(0, Math.min(MAX_OLDER, Math.round(Number(s.delay) || 0))),
+        delay,
       };
     })
     .filter((s) => s.keys.length > 0)
-    .sort((a, b) => a.delay - b.delay || a.id.localeCompare(b.id));
+    .sort(compareStages);
 }
 
 export function reuseAliasHints(
@@ -118,6 +175,7 @@ export function stageIndicesForAccount(
 export interface StageSignerSlot {
   index: number;
   delay: number;
+  lock: StageLock;
   k: number;
   n: number;
   quorum: string;
@@ -146,6 +204,7 @@ export function describeStageSlots(stages: Stage[], reuse: boolean): StageSigner
     return {
       index: i + 1,
       delay: s.delay,
+      lock: s.delay > 0 && stageLockOf(s) === "after" ? "after" : "older",
       k,
       n: nKeys,
       quorum: `${k}of${nKeys}`,
@@ -269,11 +328,14 @@ export function compileStages(
   function locked(s: (typeof cleaned)[number]): MsNode {
     const b = body(s);
     if (s.delay <= 0) return b;
+    const after = stageLockOf(s) === "after";
     return {
       id: uid(),
       kind: "and_v",
       left: { id: uid(), kind: "wrap", wrap: "v", child: b },
-      right: { id: uid(), kind: "older", n: Math.min(s.delay, MAX_OLDER) },
+      right: after
+        ? { id: uid(), kind: "after", n: Math.min(s.delay, MAX_AFTER) }
+        : { id: uid(), kind: "older", n: Math.min(s.delay, MAX_OLDER) },
     };
   }
 
@@ -299,7 +361,14 @@ export function aliasReuseKeys(root: MsNode): MsNode {
   const parts = splitDisjuncts(root);
   if (parts.length < 2) return root;
   const delays = parts.map((n) => peelLock(n).delay);
-  const order = parts.map((_, i) => i).sort((a, b) => delays[a]! - delays[b]! || a - b);
+  const locks = parts.map((n) => peelLock(n).lock);
+  const order = parts
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const ra = delays[a]! <= 0 ? 0 : locks[a] === "after" ? 2 : 1;
+      const rb = delays[b]! <= 0 ? 0 : locks[b] === "after" ? 2 : 1;
+      return ra - rb || delays[a]! - delays[b]! || a - b;
+    });
   const seen = new Map<string, number>();
   let next = root;
   for (const i of order) {
@@ -347,26 +416,34 @@ function splitDisjuncts(n: MsNode): MsNode[] {
   return [n];
 }
 
-function peelLock(n: MsNode): { delay: number; body: MsNode } {
+function peelLock(n: MsNode): { delay: number; lock: StageLock; body: MsNode } {
   n = unwrap(n);
-  if (n.kind === "older" || n.kind === "after") {
-    return { delay: n.n, body: { id: uid(), kind: "hole" } };
+  if (n.kind === "older") {
+    return { delay: n.n, lock: "older", body: { id: uid(), kind: "hole" } };
+  }
+  if (n.kind === "after") {
+    return { delay: n.n, lock: "after", body: { id: uid(), kind: "hole" } };
   }
   if (n.kind === "and_v" || n.kind === "and_b") {
     const L = peelLock(n.left);
     const R = peelLock(n.right);
-    const delay = L.delay + R.delay;
+    const after = L.lock === "after" || R.lock === "after";
+    const lock: StageLock = after ? "after" : "older";
+    const delay = after
+      ? Math.max(L.lock === "after" ? L.delay : 0, R.lock === "after" ? R.delay : 0)
+      : L.delay + R.delay;
     const lHole = L.body.kind === "hole";
     const rHole = R.body.kind === "hole";
-    if (lHole && rHole) return { delay, body: { id: uid(), kind: "hole" } };
-    if (lHole) return { delay, body: R.body };
-    if (rHole) return { delay, body: L.body };
+    if (lHole && rHole) return { delay, lock, body: { id: uid(), kind: "hole" } };
+    if (lHole) return { delay, lock, body: R.body };
+    if (rHole) return { delay, lock, body: L.body };
     return {
       delay,
+      lock,
       body: { id: uid(), kind: n.kind, left: L.body, right: R.body },
     };
   }
-  return { delay: 0, body: n };
+  return { delay: 0, lock: "older", body: n };
 }
 
 type KeyShape =
@@ -472,12 +549,21 @@ function stageAndV(body: MsNode, flat: { keys: string[]; k: number; required?: s
   return branchIsAndV(body);
 }
 
-function stageSig(delay: number, keys: string[], k: number, required?: string[], hash?: boolean, andv?: boolean): string {
+function stageSig(
+  delay: number,
+  keys: string[],
+  k: number,
+  required?: string[],
+  hash?: boolean,
+  andv?: boolean,
+  lock: StageLock = "older",
+): string {
   const sorted = [...keys].sort();
   const req = (required ?? []).filter((x) => keys.includes(x)).sort();
   const reqPart =
     req.length > 0 ? req.join(",") : k >= sorted.length || sorted.length <= 1 ? sorted.join(",") : "";
-  return `${delay}|${k}|${sorted.join(",")}|${reqPart}|${hash ? "h" : "p"}|${andv ? "a" : "m"}`;
+  const kind = delay > 0 && lock === "after" ? "after" : "older";
+  return `${kind}|${delay}|${k}|${sorted.join(",")}|${reqPart}|${hash ? "h" : "p"}|${andv ? "a" : "m"}`;
 }
 
 /** Recover the left-hand stage GUI from an imported miniscript / wallet policy. */
@@ -485,14 +571,16 @@ export function inferStages(root: MsNode | null): Stage[] {
   if (!root || root.kind === "hole") return [];
   const stages: Stage[] = [];
   for (const branch of splitDisjuncts(root)) {
-    const { delay, body } = peelLock(branch);
+    const { delay, lock, body } = peelLock(branch);
     const shape = shapeOf(body);
     if (!shape) continue;
     const flat = flattenShape(shape);
     if (!flat.keys.length) continue;
+    const n = lock === "after" ? Math.max(0, Math.min(MAX_AFTER, delay)) : Math.max(0, Math.min(MAX_OLDER, delay));
     stages.push({
       id: uid("st"),
-      delay: Math.max(0, Math.min(MAX_OLDER, delay)),
+      delay: n,
+      lock: n > 0 && lock === "after" ? "after" : undefined,
       k: Math.max(1, flat.k),
       keys: flat.keys,
       required: flat.required,
@@ -503,10 +591,10 @@ export function inferStages(root: MsNode | null): Stage[] {
   if (!stages.length) return [];
   const merged = new Map<string, Stage>();
   for (const s of stages) {
-    const sig = stageSig(s.delay, s.keys, s.k, s.required, s.hash, s.andv);
+    const sig = stageSig(s.delay, s.keys, s.k, s.required, s.hash, s.andv, stageLockOf(s));
     if (!merged.has(sig)) merged.set(sig, s);
   }
-  return [...merged.values()].sort((a, b) => a.delay - b.delay);
+  return [...merged.values()].sort(compareStages);
 }
 
 const HASHLOCK_RE = /\b(sha256|hash160|hash256|ripemd160)\s*\(/i;
@@ -529,11 +617,9 @@ export function liftIncompleteReason(root: MsNode | null, source = ""): string |
   if (/\bcombo\(/i.test(src)) return "combo";
   if (!root || root.kind === "hole") return src ? "empty" : "empty";
 
-  let after = false;
   let unknown = "";
   let thresh = false;
   visit(root, (n) => {
-    if (n.kind === "after") after = true;
     if (n.kind === "unknown") unknown = n.name || "unknown";
     if (threshHasNonKeyChild(n)) thresh = true;
   });
@@ -545,7 +631,6 @@ export function liftIncompleteReason(root: MsNode | null, source = ""): string |
     if (n === "combo") return "combo";
     return n;
   }
-  if (after) return "after";
   if (thresh) return "thresh";
 
   const branches = splitDisjuncts(root);
@@ -572,18 +657,18 @@ export function stageHighlightIds(
   if (!root || !stageId) return ids;
   const target = stages.find((s) => s.id === stageId);
   if (!target) return ids;
-  const want = stageSig(target.delay, target.keys, target.k, target.required, target.hash, target.andv);
-  const wantLoose = stageSig(target.delay, target.keys, target.k, target.required, target.hash, false);
+  const want = stageSig(target.delay, target.keys, target.k, target.required, target.hash, target.andv, stageLockOf(target));
+  const wantLoose = stageSig(target.delay, target.keys, target.k, target.required, target.hash, false, stageLockOf(target));
   const branches = splitDisjuncts(root);
   for (const branch of branches) {
-    const { delay, body } = peelLock(branch);
+    const { delay, lock, body } = peelLock(branch);
     const shape = shapeOf(body);
     if (!shape) continue;
     const flat = flattenShape(shape);
     const hash = branchHasPkh(body);
     const andv = stageAndV(body, flat);
-    const got = stageSig(delay, flat.keys, flat.k, flat.required, hash, andv);
-    const gotLoose = stageSig(delay, flat.keys, flat.k, flat.required, hash, false);
+    const got = stageSig(delay, flat.keys, flat.k, flat.required, hash, andv, lock);
+    const gotLoose = stageSig(delay, flat.keys, flat.k, flat.required, hash, false, lock);
     if (got !== want && gotLoose !== wantLoose) continue;
     visit(branch, (n) => ids.add(n.id));
     break;

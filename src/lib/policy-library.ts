@@ -36,6 +36,63 @@ export function peekChecksum(descriptor: string): string {
   return m ? m[1]!.toLowerCase() : "";
 }
 
+/** Stable fingerprint of the design (ids ignored). Used to detect unsaved edits. */
+export function policySig(s: {
+  policyName: string;
+  keys: KeyEntry[];
+  stages: Stage[];
+  reuseKeys: boolean;
+  nesting: Nesting;
+  maxOlder: MaxOlder;
+  policyMode: PolicyMode;
+  originalDescriptor: string;
+}): string {
+  return JSON.stringify({
+    n: s.policyName.trim(),
+    keys: s.keys.map((k) => [
+      k.name,
+      k.fingerprint,
+      k.derivation,
+      k.xpub,
+      k.multipath,
+      k.childPath,
+      k.note,
+      (k.children ?? []).map((c) => [c.path, c.xpub, c.fingerprint, c.note]),
+    ]),
+    stages: s.stages.map((st) => [
+      st.delay,
+      st.lock === "after" ? "after" : "older",
+      st.k,
+      [...st.keys],
+      [...(st.required ?? [])],
+      Boolean(st.sorted),
+      Boolean(st.hash),
+      Boolean(st.andv),
+    ]),
+    reuse: s.reuseKeys,
+    nesting: s.nesting,
+    maxOlder: s.maxOlder,
+    mode: s.policyMode,
+    frozen: s.policyMode === "stages" ? "" : s.originalDescriptor,
+  });
+}
+
+export function policyIsDirty(s: {
+  savedId: string | null;
+  cleanSig: string;
+  policyName: string;
+  keys: KeyEntry[];
+  stages: Stage[];
+  reuseKeys: boolean;
+  nesting: Nesting;
+  maxOlder: MaxOlder;
+  policyMode: PolicyMode;
+  originalDescriptor: string;
+}): boolean {
+  if (!s.savedId) return true;
+  return policySig(s) !== s.cleanSig;
+}
+
 export function decodeLibrary(raw: string): SavedPolicy[] {
   try {
     const parsed = JSON.parse(raw) as unknown;

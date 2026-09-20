@@ -72,7 +72,8 @@ export function evaluateCoinStatus(opts: {
   if (stages.length) {
     const slots = describeStageSlots(stages, opts.reuse ?? false);
     for (const slot of slots) {
-      paths.push(olderPath(slot.index, slot.delay, slot.quorum, tip, height, conf));
+      if (slot.lock === "after") paths.push(afterPath(slot.index, slot.delay, slot.quorum, tip));
+      else paths.push(olderPath(slot.index, slot.delay, slot.quorum, tip, height, conf));
     }
   } else if (hints.afters.length || hints.olders.length) {
     let i = 1;

@@ -56,6 +56,7 @@ const DEMO_PROBE: NodeProbe = {
 };
 
 let finishLock: Promise<void> | null = null;
+let watchGen = 0;
 
 export const useBitcoind = create<BitcoindState>()(
   persist(
@@ -314,7 +315,12 @@ export const useBitcoind = create<BitcoindState>()(
         if (status !== "ready" || demo) return null;
         const n = clampUtxoCount(opts?.count ?? 20);
         const checksum = checksumOf(descriptor);
-        set({ scanningWatch: true });
+        const gen = ++watchGen;
+        const stale = get().lastWatch?.checksum !== checksum;
+        set({
+          scanningWatch: true,
+          ...(stale ? { lastWatch: null, lastUtxo: null } : {}),
+        });
         try {
           const cfg = { url: normalizeRpcUrl(url), username, password };
           let from = 0;
@@ -328,16 +334,17 @@ export const useBitcoind = create<BitcoindState>()(
               from,
               checksum,
             });
+            if (gen !== watchGen) return merged;
             merged = merged ? mergeWatchSnapshots(merged, next) : next;
             from += n;
             merged.scanned = Math.min(from, UTXO_SCAN_CAP);
             get().setLastWatch(merged);
             if (!next.unspents.length) break;
           }
-          set({ scanningWatch: false });
+          if (gen === watchGen) set({ scanningWatch: false });
           return merged;
         } catch (e) {
-          set({ scanningWatch: false });
+          if (gen === watchGen) set({ scanningWatch: false });
           throw e;
         }
       },
