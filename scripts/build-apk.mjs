@@ -125,19 +125,7 @@ function patchAndroidManifest() {
 </resources>
 `,
   );
-  writeFileSync(
-    join(xmlDir, "network_security_config.xml"),
-    `<?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
-        <trust-anchors>
-            <certificates src="system" />
-            <certificates src="user" />
-        </trust-anchors>
-    </base-config>
-</network-security-config>
-`,
-  );
+  // Keep the committed network_security_config (cleartext only localhost/*.local).
 }
 
 function verifyApk() {
