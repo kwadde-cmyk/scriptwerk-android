@@ -221,6 +221,7 @@ if (!existsSync(join(root, "android/app/build.gradle"))) {
 }
 
 run("npx", ["cap", "sync", "android"]);
+run("python3", ["scripts/android-icons.py"]);
 patchAndroidManifest();
 writeAndroidReadme();
 
