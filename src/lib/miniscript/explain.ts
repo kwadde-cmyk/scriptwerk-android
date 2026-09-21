@@ -107,7 +107,7 @@ function flatten(
         {
           delay: node.n,
           lock: "after",
-          label: t(locale, "explain.afterBlock", { n: node.n.toLocaleString(numberLocale(locale)) }),
+          label: t(locale, "explain.timelock"),
           detail: `after(${node.n})`,
         },
       ];

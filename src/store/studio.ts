@@ -726,15 +726,17 @@ export const useStudio = create<StudioState>()(
                 reuseKeys: bundle.reuseKeys ?? get().reuseKeys,
                 savedId: null,
                 cleanSig: "",
+                ...(bundle.labels ? { labels: mergeLabels(get().labels, bundle.labels) } : {}),
               });
               return;
             }
-            mutate(
-              finishImportedPolicy(extracted.node, keys, bundle.descriptor || sourceFromParse(parsed), {
+            mutate({
+              ...finishImportedPolicy(extracted.node, keys, bundle.descriptor || sourceFromParse(parsed), {
                 preserveGroups: true,
                 reuseKeys: bundle.reuseKeys,
               }),
-            );
+              ...(bundle.labels ? { labels: mergeLabels(get().labels, bundle.labels) } : {}),
+            });
           } catch (e) {
             fail(e);
           }

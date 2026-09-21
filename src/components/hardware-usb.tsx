@@ -483,7 +483,7 @@ function AddressCheckPanel({
       ) : null}
       <p className="text-2xs text-fg-subtle">
         {nodeStatus === "ready" && !nodeDemo
-          ? probe?.subversion || probe?.chain || "Bitcoin Core"
+          ? probe?.subversion || probe?.chain || t("node.title")
           : t("node.err.notConnected")}
       </p>
       <Button

@@ -21,7 +21,7 @@ export interface Stage {
   andv?: boolean;
 }
 
-export const DELAY_PRESET_CORE = [0, 1, 144, 1008, 4320, 52596, 60000] as const;
+export const DELAY_PRESET_CORE = [4320, 52596] as const;
 /** Bitcoin nSequence / older() ceiling. */
 export const MAX_OLDER = 65535;
 /** Nunchuk rejects 65535; this is the compatible default. */
@@ -61,18 +61,6 @@ export function delayPresets(maxOlder: number = DEFAULT_MAX_OLDER): number[] {
 }
 
 export const DELAY_PRESETS = delayPresets(DEFAULT_MAX_OLDER);
-
-export function afterPresets(tip = 0): number[] {
-  const t = Math.max(0, Math.floor(Number(tip) || 0));
-  if (t <= 0) return [0];
-  const offsets = [0, 144, 1008, 4320, 52596];
-  const out: number[] = [0];
-  for (const o of offsets) {
-    const n = Math.min(MAX_AFTER, t + o);
-    if (!out.includes(n)) out.push(n);
-  }
-  return out;
-}
 
 export function defaultStages(): Stage[] {
   return [{ id: uid("st"), delay: 0, k: 2, keys: ["A", "B", "C"] }];
@@ -516,6 +504,7 @@ function flattenShape(shape: KeyShape): { keys: string[]; k: number; required?: 
 }
 
 export function stageFormula(stage: Stage): string {
+  if (!stage.keys.length) return "";
   const req = (stage.required ?? []).filter((k) => stage.keys.includes(k));
   const rest = stage.keys.filter((k) => !req.includes(k));
   const kind = stage.hash ? " pkh" : "";

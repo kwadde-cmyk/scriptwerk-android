@@ -488,10 +488,19 @@ describe("keys", () => {
 
 describe("stages", () => {
   it("caps relative lock presets at 65534 by default", () => {
-    assert.deepEqual(delayPresets(65534).slice(-1), [65534]);
-    assert.deepEqual(delayPresets(65535).slice(-1), [65535]);
+    assert.deepEqual(delayPresets(65534), [4320, 52596, 65534]);
+    assert.deepEqual(delayPresets(65535), [4320, 52596, 65535]);
     assert.equal(nextStageDelay([{ id: "s", delay: 60000, k: 1, keys: ["A"] }], 65534), 65534);
     assert.equal(nextStageDelay([{ id: "s", delay: 60000, k: 1, keys: ["A"] }], 65535), 65535);
+  });
+
+  it("does not compile a new stage until keys are chosen", () => {
+    const { root } = compileStages([
+      { id: "s1", delay: 0, k: 2, keys: ["A", "B"] },
+      { id: "s2", delay: 4320, k: 1, keys: [] },
+    ]);
+    assert.equal(compileMiniscript(root), "multi(2,A,B)");
+    assert.equal(stageFormula({ id: "x", delay: 0, k: 1, keys: [] }), "");
   });
 
   it("compiles 2-of-3 without timelock", () => {
@@ -519,6 +528,9 @@ describe("stages", () => {
     const recovered = inferStages(root);
     assert.equal(recovered[0]?.lock, "after");
     assert.equal(recovered[0]?.delay, 800000);
+    const exp = explainPolicy(root, "de");
+    assert.match(exp.narrative[0] ?? "", /^Ab Block 800\.000: A\.?$/);
+    assert.equal(exp.groups[0]?.paths[0]?.label, "A");
   });
 
   it("compiles 2-of-2 as and_v when requested", () => {
@@ -926,10 +938,12 @@ describe("bip388", () => {
       keys,
       reuseKeys: false,
       network: "mainnet",
+      labels: { "addr:bc1qaa": { type: "addr", ref: "bc1qaa", label: "Rent" } },
     });
     const bundle = parseScriptwerkBundle(json);
     assert.equal(bundle?.keys[0]?.note, "Alice");
     assert.equal(bundle?.keys[1]?.note, "Bob");
+    assert.equal(bundle?.labels?.["addr:bc1qaa"]?.label, "Rent");
   });
 
   it("keeps child accounts on the same fingerprint instead of new letters", () => {

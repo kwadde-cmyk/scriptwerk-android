@@ -89,13 +89,13 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
                   <div key={`${g.lock ?? "older"}-${g.delay}`} className="rounded-lg border border-border bg-surface px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm">{lockWhen(g.lock ?? "older", g.delay, locale)}</span>
+                      {g.lock === "after" ? null : (
                       <Badge variant={g.delay === 0 ? "ok" : "default"}>
                         {g.delay === 0
                           ? t("read.now")
-                          : g.lock === "after"
-                            ? t("explain.afterBlock", { n: g.delay.toLocaleString(numberLocale(locale)) })
-                            : t("read.blocksShort", { n: g.delay.toLocaleString(numberLocale(locale)) })}
+                          : t("read.blocksShort", { n: g.delay.toLocaleString(numberLocale(locale)) })}
                       </Badge>
+                      )}
                     </div>
                     <ul className="mt-1 space-y-0.5">
                       {g.paths.map((p) => (

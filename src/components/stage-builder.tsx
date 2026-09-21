@@ -1,5 +1,4 @@
 import {
-  afterPresets,
   compareStages,
   delayPresets,
   defaultStages,
@@ -20,7 +19,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/lib/use-t";
-import { numberLocale } from "@/lib/i18n";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { PolicyStatusBanner } from "@/components/interpreter-panel";
 
@@ -49,18 +47,14 @@ export function StageBuilder() {
       return;
     }
     const spec = nextStageSpec(stages, maxOlder, tip);
-    const prev = stages[stages.length - 1];
-    const names = prev?.keys.length ? [...prev.keys] : pool.slice(0, 3);
-    const extra = nextKeyName([...pool, ...names]);
-    names.push(extra);
     setStages([
       ...stages.map((s) => ({ ...s, sorted: false })),
       {
         id: uid("st"),
         delay: spec.delay,
         lock: spec.lock === "after" ? "after" : undefined,
-        k: Math.min(prev?.k ?? 2, names.length),
-        keys: names,
+        k: 1,
+        keys: [],
       },
     ]);
   }
@@ -91,7 +85,6 @@ export function StageBuilder() {
                 allowSorted={allowSorted}
                 expert={expert}
                 maxOlder={maxOlder}
-                tip={tip}
                 selected={selectedStageId === s.id}
                 locked={frozen}
                 onSelect={() => selectStage(s.id)}
@@ -205,7 +198,6 @@ function StageCard({
   allowSorted,
   expert,
   maxOlder,
-  tip = 0,
   selected,
   locked = false,
   onSelect,
@@ -220,7 +212,6 @@ function StageCard({
   allowSorted: boolean;
   expert: boolean;
   maxOlder: number;
-  tip?: number;
   selected: boolean;
   locked?: boolean;
   onSelect: () => void;
@@ -228,7 +219,6 @@ function StageCard({
   onRemove: () => void;
 }) {
   const { t, locale } = useT();
-  const nloc = numberLocale(locale);
   const n = stage.keys.length;
   const k = Math.min(Math.max(stage.k, 1), Math.max(n, 1));
   const byName = new Map(entries.map((e) => [e.name, e]));
@@ -588,26 +578,7 @@ function StageCard({
         />
         <div className="mt-2 flex flex-wrap gap-1.5">
           {stageLockOf(stage) === "after"
-            ? afterPresets(tip).map((nDelay) => (
-                <button
-                  key={`after-${nDelay}`}
-                  type="button"
-                  onClick={() => onChange({ ...stage, delay: nDelay, lock: "after", sorted: nDelay > 0 ? false : stage.sorted })}
-                  className={
-                    stage.delay === nDelay
-                      ? "h-8 rounded-full bg-muted px-2.5 text-2xs text-fg"
-                      : "h-8 rounded-full border border-border px-2.5 text-2xs text-fg-muted hover:bg-muted hover:text-fg"
-                  }
-                >
-                  {nDelay <= 0
-                    ? t("delay.0")
-                    : nDelay === tip
-                      ? t("stages.afterNow")
-                      : [144, 1008, 4320, 52596].includes(nDelay - tip)
-                        ? `+ ${t(`delay.${nDelay - tip}`)}`
-                        : t("stages.afterPlus", { n: (nDelay - tip).toLocaleString(nloc) })}
-                </button>
-              ))
+            ? null
             : delayPresets(maxOlder).map((nDelay) => (
                 <button
                   key={nDelay}

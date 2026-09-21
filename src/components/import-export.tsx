@@ -2,13 +2,8 @@ import { useCallback, useMemo, useState } from "react";
 import { compileBsms } from "@/lib/miniscript/compile";
 import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { formatExportWithKeys, formatKeyList } from "@/lib/miniscript/keys";
-import {
-  compileBip388,
-  formatBitboxJson,
-  formatLedgerJson,
-  formatScriptwerkJson,
-  type Bip388CompileResult,
-} from "@/lib/miniscript/bip388";
+import { compileBip388, formatBitboxJson, formatLedgerJson, formatScriptwerkJson, type Bip388CompileResult } from "@/lib/miniscript/bip388";
+import { buildBip329Export, serializeBip329 } from "@/lib/bip329";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,6 +47,7 @@ export function ImportExportBar() {
   const [draft, setDraft] = useState("");
   const walletName = useStudio((s) => s.policyName);
   const setWalletName = useStudio((s) => s.setPolicyName);
+  const labels = useStudio((s) => s.labels);
 
   const compiled = useStudio(compiledForStudio);
   const policyMode = useStudio((s) => s.policyMode);
@@ -97,8 +93,26 @@ export function ImportExportBar() {
         policyMode,
         originalDescriptor,
         liftWarning,
+        labels,
       }),
     );
+    const labelBody = serializeBip329(
+      buildBip329Export({
+        labels,
+        origin: compiled.descriptor || undefined,
+        xpubs: keys
+          .filter((k) => k.xpub.trim())
+          .map((k) => ({
+            xpub: k.xpub.trim(),
+            origin:
+              k.fingerprint && k.derivation
+                ? `[${k.fingerprint.replace(/^#/, "")}/${k.derivation.replace(/^m\//, "")}]`
+                : undefined,
+            note: k.note,
+          })),
+      }),
+    );
+    if (labelBody) download("scriptwerk-labels.jsonl", labelBody);
     if (bip?.ok && !frozen) {
       download("scriptwerk-ledger.json", formatLedgerJson(bip.policy));
       download("scriptwerk-bitbox.json", formatBitboxJson(bip.policy));

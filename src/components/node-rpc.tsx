@@ -28,8 +28,8 @@ import {
   defaultRpcPort,
   deriveAddressRange,
   hostElectrumInfo,
-  hostProxyAvailable,
   hostProxyInfo,
+  hostProxyIsStartosSource,
   isLanIpUrl,
   looksLikeStartos,
   normalizeRpcUrl,
@@ -126,13 +126,13 @@ function NodeDialogBody() {
   const nodeUrl = normalizeRpcUrl(url, network);
 
   useEffect(() => {
-    void hostProxyAvailable().then(setProxyOn);
     void hostProxyInfo().then((info) => {
       if (!info) return;
-      setProxyOn(true);
-      setCanLock(info.locked || Boolean(info.user || info.password));
-      setAuthLocked(info.locked || Boolean(info.user || info.password));
-      setUseHostProxy(true);
+      const startosPkg = hostProxyIsStartosSource(info.source);
+      setProxyOn(startosPkg);
+      setCanLock(startosPkg && (info.locked || Boolean(info.user || info.password)));
+      setAuthLocked(startosPkg && (info.locked || Boolean(info.user || info.password)));
+      setUseHostProxy(startosPkg);
       setPresetUser(info.user);
       setBuildTag(info.build);
       presetRef.current = { ...presetRef.current, url: info.url, user: info.user, password: info.password };
@@ -141,7 +141,7 @@ function NodeDialogBody() {
         ...(info.url ? { url: info.url } : {}),
         ...(info.user ? { username: info.user } : {}),
         ...(info.password ? { password: info.password } : {}),
-        kind: "startos",
+        kind: startosPkg || looksLikeStartos(info.url) ? "startos" : "core",
       });
       if (st.status === "idle") void st.connectLive(useStudio.getState().network);
     });
@@ -150,7 +150,8 @@ function NodeDialogBody() {
       setElectrumPreset(info.url);
       setElectrumSource(info.source);
       presetRef.current = { ...presetRef.current, electrum: info.url };
-      useBitcoind.getState().patch({ electrum: info.url });
+      const st = useBitcoind.getState();
+      if (!st.electrum.trim()) st.patch({ electrum: info.url });
     });
   }, []);
 
@@ -212,7 +213,6 @@ function NodeDialogBody() {
                   url: p.url,
                   username: p.user,
                   password: p.password,
-                  electrum: p.electrum || electrumPreset,
                   kind: "startos",
                 });
                 setAuthLocked(true);
@@ -220,7 +220,7 @@ function NodeDialogBody() {
               }}
               className="h-9 rounded-full border border-border px-3 text-xs text-fg-muted hover:bg-muted hover:text-fg"
             >
-              {t("node.resetPreset")}
+              {t("node.resetRpc")}
             </button>
           </div>
           <p className="text-2xs text-pretty text-fg-muted">{t("node.lockHint")}</p>
@@ -309,19 +309,31 @@ function NodeDialogBody() {
           {proxyOn && canLock ? t("node.startos.help") : startos ? t("node.startos.rpcUser") : t("node.lanHelp")}
         </p>
         <div>
-          <Label htmlFor="node-electrum">{t("node.electrum")}</Label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label htmlFor="node-electrum">{t("node.electrum")}</Label>
+            {electrumPreset || electrum ? (
+              <button
+                type="button"
+                onClick={() => patch({ electrum: presetRef.current.electrum || electrumPreset })}
+                className="h-9 rounded-full border border-border px-3 text-xs text-fg-muted hover:bg-muted hover:text-fg"
+              >
+                {t("node.resetElectrum")}
+              </button>
+            ) : null}
+          </div>
           <Input
             id="node-electrum"
             name="electrum"
             value={electrum}
-            disabled={authLocked && Boolean(electrumPreset)}
             onChange={(e) => patch({ electrum: e.target.value })}
-            placeholder="host.local:50001"
+            placeholder="host.local:50001  ·  ssl://host:50002"
             className="mt-1.5 font-mono text-xs"
           />
           <p className="mt-1 text-2xs text-pretty text-fg-muted">
             {electrumPreset
-              ? t("node.electrumStartos", { name: electrumSource === "electrs" ? "Electrs" : "Fulcrum" })
+              ? electrumSource
+                ? t("node.electrumStartos", { name: electrumSource === "electrs" ? "Electrs" : "Fulcrum" })
+                : t("node.electrumDocker")
               : t("node.electrumHint")}
           </p>
         </div>

@@ -101,6 +101,11 @@ export function looksLikeStartos(url: string): boolean {
   return false;
 }
 
+/** StartOS package injects BITCOIND_RPC_SOURCE=startos. Docker/web install uses env. */
+export function hostProxyIsStartosSource(source: string): boolean {
+  return source.trim().toLowerCase() === "startos";
+}
+
 export function isLanIpUrl(url: string): boolean {
   try {
     const raw = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
@@ -220,6 +225,7 @@ let useHostProxyFlag = true;
 /** When false, skip the same-origin proxy so form URL/user/password are used. */
 export function setUseHostProxy(on: boolean) {
   useHostProxyFlag = on;
+  hostProxyMemo = null;
 }
 
 export async function hostProxyAvailable(): Promise<boolean> {
@@ -227,6 +233,11 @@ export async function hostProxyAvailable(): Promise<boolean> {
   if (typeof fetch === "undefined") return false;
   if (hostProxyMemo != null) return hostProxyMemo;
   try {
+    const info = await hostProxyInfo();
+    if (!info?.configured || !hostProxyIsStartosSource(info.source)) {
+      hostProxyMemo = false;
+      return false;
+    }
     const res = await fetch("/bitcoind-rpc", { method: "GET", cache: "no-store" });
     hostProxyMemo = res.status === 204;
   } catch {

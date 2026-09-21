@@ -15,6 +15,7 @@ import {
 } from "./keys.ts";
 import { parseAny } from "./parser.ts";
 import { uid } from "../utils.ts";
+import { asStoredLabels, storedFromRecords, type Bip329Record, type StoredLabel } from "../bip329.ts";
 
 export interface Bip388Key {
   index: number;
@@ -600,7 +601,9 @@ export function formatScriptwerkJson(opts: {
   policyMode?: string;
   originalDescriptor?: string;
   liftWarning?: string;
+  labels?: Record<string, StoredLabel>;
 }): string {
+  const labels = opts.labels ? Object.values(opts.labels).filter((l) => l.label || l.spendable !== undefined) : [];
   return `${JSON.stringify(
     {
       format: "scriptwerk",
@@ -629,6 +632,7 @@ export function formatScriptwerkJson(opts: {
           label: c.note,
         })),
       })),
+      ...(labels.length ? { labels } : {}),
     },
     null,
     2,
@@ -645,6 +649,7 @@ export function parseScriptwerkBundle(text: string): {
   policyMode?: string;
   originalDescriptor?: string;
   liftWarning?: string;
+  labels?: Record<string, StoredLabel>;
 } | null {
   let parsed: unknown;
   try {
@@ -692,6 +697,10 @@ export function parseScriptwerkBundle(text: string): {
     });
   }
   const network = firstString(rec, ["network"]);
+  let labels: Record<string, StoredLabel> | undefined;
+  if (Array.isArray(rec.labels)) labels = storedFromRecords(rec.labels as Bip329Record[]);
+  else if (rec.labels && typeof rec.labels === "object") labels = asStoredLabels(rec.labels);
+  if (labels && !Object.keys(labels).length) labels = undefined;
   return {
     name: firstString(rec, ["name"]) || "Scriptwerk",
     miniscript,
@@ -702,5 +711,6 @@ export function parseScriptwerkBundle(text: string): {
     policyMode: firstString(rec, ["policyMode"]) || undefined,
     originalDescriptor: firstString(rec, ["originalDescriptor"]) || undefined,
     liftWarning: firstString(rec, ["liftWarning"]) || undefined,
+    labels,
   };
 }

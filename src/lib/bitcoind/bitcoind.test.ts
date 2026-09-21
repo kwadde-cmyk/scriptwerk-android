@@ -7,6 +7,7 @@ import {
   defaultRpcPort,
   isLanIpUrl,
   looksLikeStartos,
+  hostProxyIsStartosSource,
   normalizeRpcUrl,
   splitCookie,
 } from "./rpc.ts";
@@ -36,6 +37,9 @@ describe("bitcoind rpc helpers", () => {
     assert.equal(looksLikeStartos("https://abc.local:57521"), true);
     assert.equal(isLanIpUrl("https://192.168.1.80:57521"), true);
     assert.equal(isLanIpUrl("https://abc.local:57521"), false);
+    assert.equal(hostProxyIsStartosSource("startos"), true);
+    assert.equal(hostProxyIsStartosSource("env"), false);
+    assert.equal(hostProxyIsStartosSource(""), false);
   });
 
   it("detects CORS-blocked StartOS traces", () => {
