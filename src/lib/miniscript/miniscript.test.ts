@@ -47,7 +47,7 @@ import {
 } from "./keys.ts";
 import { visit } from "./ast.ts";
 import { parseAny } from "./parser.ts";
-import { compileStages, delayPresets, describeStageSlots, inferNesting, inferStages, liftIncompleteReason, nextStageDelay, permutations, slotsForAccount, sortedMultiAllowed, stageFormula, stageHighlightIds, stageIndicesForAccount, stageKeyOrderVariants } from "./stages.ts";
+import { compileStages, delayPresets, describeStageSlots, inferNesting, inferStages, liftIncompleteReason, nextStageDelay, permutations, slotsForAccount, sortedMultiAllowed, stageFormula, stageHighlightIds, stageIndicesForAccount } from "./stages.ts";
 import { confirmationsAt, coinHeightFromConfirms, evaluateSpendPaths, oldestCoinHeight, youngestCoinHeight } from "./spend-check.ts";
 import { evaluateCoinStatus } from "./coin-status.ts";
 import {

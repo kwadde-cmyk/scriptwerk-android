@@ -696,7 +696,6 @@ export function parseScriptwerkBundle(text: string): {
       children: kids,
     });
   }
-  const network = firstString(rec, ["network"]);
   let labels: Record<string, StoredLabel> | undefined;
   if (Array.isArray(rec.labels)) labels = storedFromRecords(rec.labels as Bip329Record[]);
   else if (rec.labels && typeof rec.labels === "object") labels = asStoredLabels(rec.labels);

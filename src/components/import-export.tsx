@@ -159,7 +159,7 @@ export function ImportExportBar() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="qr" className="space-y-3">
-              <QrScanner compact onRead={onQrRead} />
+              <QrScanner onRead={onQrRead} />
               <FilePick
                 onRead={(text) => {
                   setDraft(text);

@@ -853,7 +853,7 @@ function ImportPane({
       <div className="flex flex-wrap items-center gap-2">
         <FilePick onRead={setDraft} />
       </div>
-      <QrScanner compact onRead={onQr} />
+      <QrScanner onRead={onQr} />
       {children}
       {error ? <p className="text-xs text-danger">{error}</p> : null}
       <div className="flex justify-end">

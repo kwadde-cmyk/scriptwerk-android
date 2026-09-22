@@ -156,7 +156,7 @@ function ParamDialog({
         <div className="space-y-3">
           {op.params.some((p) => p.kind === "key") ? (
             <Field label={t("ops.key")}>
-              <KeySelect value={key} names={keyNames} onChange={setKey} />
+              <KeySelect value={key} onChange={setKey} />
             </Field>
           ) : null}
           {op.params.some((p) => p.kind === "keylist") ? (
@@ -166,7 +166,6 @@ function ParamDialog({
                   <div key={i} className="flex gap-2">
                     <KeySelect
                       value={item}
-                      names={keyNames}
                       onChange={(v) => setKeys(keys.map((x, j) => (j === i ? v : x)))}
                     />
                     <Button
@@ -274,11 +273,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function KeySelect({
   value,
-  names,
   onChange,
 }: {
   value: string;
-  names: string[];
   onChange: (v: string) => void;
 }) {
   return (

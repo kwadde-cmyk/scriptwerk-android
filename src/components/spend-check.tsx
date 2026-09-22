@@ -38,7 +38,7 @@ export function SpendCheckCard() {
     () => keys.filter((k) => k.name.trim()).sort((a, b) => a.name.localeCompare(b.name)),
     [keys],
   );
-  const coins = lastUtxo?.coins ?? [];
+  const coins = useMemo(() => lastUtxo?.coins ?? [], [lastUtxo]);
   const coinHeight = coins.length ? 0 : coinHeightFromConfirms(tip, confirms);
   const report = useMemo(
     () =>

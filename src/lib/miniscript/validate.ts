@@ -1,5 +1,5 @@
 import type { MsNode } from "./ast.ts";
-import { collectKeys, hasHoles, visit } from "./ast.ts";
+import { hasHoles, visit } from "./ast.ts";
 import { compileMiniscript } from "./compile.ts";
 import { t, type Locale } from "../i18n.ts";
 
@@ -55,7 +55,6 @@ export function validatePolicy(root: MsNode | null, locale: Locale = "de"): Issu
     }
   });
 
-  const keys = collectKeys(root);
   const reused = reusedNames(root);
   if (reused.length) {
     issues.push({

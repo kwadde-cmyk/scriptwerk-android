@@ -80,7 +80,7 @@ export function QrPreview({ value, label, compact }: { value: string; label: str
   );
 }
 
-export function QrScanner({ onRead, compact }: { onRead: (text: string) => void; compact?: boolean }) {
+export function QrScanner({ onRead }: { onRead: (text: string) => void }) {
   const { t } = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);

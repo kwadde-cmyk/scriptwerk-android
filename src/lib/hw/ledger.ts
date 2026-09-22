@@ -37,7 +37,7 @@ export async function openLedgerSession(): Promise<HwSession> {
   }
   const fingerprint = String(await app.getMasterFingerprint()).toLowerCase();
   const label = info?.name ? `Ledger · ${info.name} ${info.version}` : "Ledger";
-  const coin: "0'" = "0'";
+  const coin = "0'" as const;
 
   async function pubkey(path: string): Promise<string> {
     return await app.getExtendedPubkey(normalizeHwPath(path), true);

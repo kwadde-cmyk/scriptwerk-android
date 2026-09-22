@@ -164,7 +164,6 @@ function OrderVariants() {
   const expert = useStudio((s) => s.mode) === "expert";
   const setStages = useStudio((s) => s.setStages);
   const updateKey = useStudio((s) => s.updateKey);
-  const root = useStudio((s) => s.root);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const count = useMemo(() => stageOrderCount(stages), [stages]);
