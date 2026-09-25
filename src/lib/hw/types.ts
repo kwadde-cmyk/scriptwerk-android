@@ -27,6 +27,7 @@ export interface HwSession {
     coin?: "btc";
   }) => Promise<string>;
   close: () => Promise<void>;
+  signPsbt: (opts: { psbt: string; policy: Bip388Policy; hmac: string }) => Promise<string>;
 }
 
 export type HidSupport = "ok" | "missing" | "iframe";

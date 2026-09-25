@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import { NodeCheckCard } from "@/components/node-rpc";
 import { SpendCheckCard } from "@/components/spend-check";
 import { WatchWalletPanel } from "@/components/watch-wallet";
+import { TxTab } from "@/components/tx-builder";
 import { ScriptHighlight } from "@/components/script-view";
 
 export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }: { toolbarStart?: ReactNode }) {
@@ -60,6 +61,9 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
           </TabsTrigger>
           <TabsTrigger value="wallet" className="flex-1 px-1.5 text-xs">
             {t("read.sheet.wallet")}
+          </TabsTrigger>
+          <TabsTrigger value="tx" className="flex-1 px-1.5 text-xs">
+            {t("read.sheet.tx")}
           </TabsTrigger>
         </TabsList>
       </div>
@@ -148,6 +152,16 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
         <ScrollArea className="h-full">
           <div className="p-4">
             <WatchWalletPanel />
+          </div>
+        </ScrollArea>
+      </TabsContent>
+      <TabsContent
+        value="tx"
+        className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+      >
+        <ScrollArea className="h-full">
+          <div className="p-4">
+            <TxTab />
           </div>
         </ScrollArea>
       </TabsContent>

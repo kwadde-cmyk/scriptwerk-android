@@ -13,7 +13,9 @@ import { defaultStages } from "@/lib/miniscript/stages";
 import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
 import { useT } from "@/lib/use-t";
+import { SCRIPTWERK_VERSION } from "@/lib/version";
 import { RecoveryPrintRoot } from "@/components/recovery-sheet";
+import { AmountUnitSwitch } from "@/components/amount";
 import { NodeAutoSync } from "@/components/node-rpc";
 import { Toaster } from "sonner";
 import type { Locale } from "@/lib/i18n";
@@ -87,6 +89,9 @@ export function StudioShell() {
                 className="h-full w-auto max-w-none object-cover object-left"
               />
             </div>
+            <p className="pointer-events-none absolute top-2 left-28 z-10 font-mono text-2xs text-fg-subtle sm:left-40 lg:left-52">
+              {SCRIPTWERK_VERSION}
+            </p>
             <div className="absolute top-1.5 right-3 z-10 text-right sm:top-2 lg:top-2 lg:right-4">
               <p className="font-display text-[1.2rem] font-semibold tracking-[0.2em] text-fg sm:text-2xl lg:text-[1.95rem] lg:tracking-[0.24em]">
                 SCRIPTWERK
@@ -95,13 +100,15 @@ export function StudioShell() {
                 Miniscript Studio
               </p>
             </div>
-            <div className="absolute right-3 bottom-2 z-20 hidden lg:flex flex-wrap items-center justify-end gap-2">
+            <div className="absolute right-3 bottom-2 left-52 z-20 hidden flex-nowrap items-center justify-end gap-2 overflow-x-auto lg:flex">
+              <AmountUnitSwitch />
               <ImportExportBar />
               <ModeSwitch />
               <LangSwitch locale={locale} setLocale={setLocale} label={t("header.language")} />
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 lg:hidden">
+            <AmountUnitSwitch />
             <ImportExportBar />
             <ModeSwitch />
             <LangSwitch locale={locale} setLocale={setLocale} label={t("header.language")} />

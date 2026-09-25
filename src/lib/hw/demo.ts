@@ -61,6 +61,9 @@ export function openDemoSession(kind: HwKind): HwSession {
       return `bc1qswdemo${change}${String(index).padStart(3, "0")}${hex}xxxxxxxx`;
     },
     async close() {},
+    async signPsbt() {
+      throw new Error("tx.err.demoSign");
+    },
   };
 }
 

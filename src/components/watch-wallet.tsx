@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CopyButton } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
-import { AmountText, AmountUnitSwitch } from "@/components/amount";
+import { AmountText } from "@/components/amount";
 import { FilePick } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
 import { localizeMessage, numberLocale } from "@/lib/i18n";
@@ -202,14 +202,11 @@ export function WatchWalletPanel() {
       <p className="text-2xs text-pretty text-fg-muted">{t("wallet.blurb")}</p>
 
       <section className="rounded-lg border border-border bg-surface px-3 py-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.title")}</p>
-            <p className="mt-1 font-display text-lg tracking-tight text-fg">
-              <PolicyNameHeading />
-            </p>
-          </div>
-          <AmountUnitSwitch />
+        <div>
+          <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.title")}</p>
+          <p className="mt-1 font-display text-lg tracking-tight text-fg">
+            <PolicyNameHeading />
+          </p>
         </div>
         {checksum ? (
           <p className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-fg">

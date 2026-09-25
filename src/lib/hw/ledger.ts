@@ -1,4 +1,5 @@
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
+import { withPartialSigs } from "@/lib/tx/psbt";
 import { ledgerPolicyReady } from "@/lib/miniscript/bip388";
 import { alignLedgerOrigin, isHmacHex, policyCacheKey } from "./address-check.ts";
 import { formatOrigin, hwErrorMessage, normalizeHwPath, pathToDerivation, type HwSession } from "./types.ts";
@@ -125,6 +126,29 @@ export async function openLedgerSession(): Promise<HwSession> {
         await transport.close();
       } catch {
         /* already gone */
+      }
+    },
+    async signPsbt({ psbt, policy, hmac }) {
+      try {
+        const key = policyCacheKey(policy);
+        const wp = bound?.key === key ? bound.wp : walletPolicyOf(policy);
+        const hex =
+          bound?.key === key && isHmacHex(bound.hmacHex)
+            ? bound.hmacHex
+            : isHmacHex(hmac)
+              ? hmac
+              : await registerWp(policy);
+        const sigs = await app.signPsbt(psbt, wp, Buffer.from(hex, "hex"));
+        return withPartialSigs(
+          psbt,
+          sigs.map(([input, sig]) => ({
+            input,
+            pubkey: new Uint8Array(sig.pubkey),
+            signature: new Uint8Array(sig.signature),
+          })),
+        );
+      } catch (err) {
+        throw new Error(hwErrorMessage(err));
       }
     },
   };

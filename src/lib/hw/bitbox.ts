@@ -1,7 +1,7 @@
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
 import { ledgerPolicyReady } from "@/lib/miniscript/bip388";
 import { bitboxAddressPath } from "./address-check.ts";
-import { formatOrigin, hwErrorMessage, normalizeHwPath, pathToDerivation, type HwSession } from "./types.ts";
+import { formatOrigin, hwErrorMessage, normalizeHwPath, pathToDerivation, defaultAccountPath, type HwSession } from "./types.ts";
 import { installNativeUsbPolyfill } from "./native-usb.ts";
 
 type BitboxMod = typeof import("bitbox-api");
@@ -123,6 +123,15 @@ export async function openBitBoxSession(
         device.close();
       } catch {
         /* already gone */
+      }
+    },
+    async signPsbt({ psbt, policy }) {
+      try {
+        const script = scriptConfig(policy);
+        const keypath = script.policy.keys.find((k) => k.keypath)?.keypath || defaultAccountPath();
+        return await device.btcSignPSBT("btc", psbt, { scriptConfig: script, keypath }, "sat");
+      } catch (err) {
+        throw new Error(hwErrorMessage(err));
       }
     },
   };
