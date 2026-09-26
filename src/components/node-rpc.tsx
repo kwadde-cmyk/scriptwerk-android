@@ -771,10 +771,11 @@ function CheckResult({ bare = false }: { bare?: boolean }) {
   return <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs">{body}</div>;
 }
 
-/** When Core is live, check the descriptor and scan UTXOs once per checksum. */
+/** Scan the wallet through Electrum when a server is set. Core check stays separate. */
 export function NodeAutoSync() {
   const status = useBitcoind((s) => s.status);
   const demo = useBitcoind((s) => s.demo);
+  const electrum = useBitcoind((s) => s.electrum);
   const checking = useBitcoind((s) => s.checking);
   const scanningWatch = useBitcoind((s) => s.scanningWatch);
   const compiled = useStudio(compiledForStudio);
@@ -783,26 +784,22 @@ export function NodeAutoSync() {
   const last = useRef("");
 
   useEffect(() => {
-    if (status !== "ready" || demo || !desc || !cs) {
-      if (status !== "ready") last.current = "";
-      const st = useBitcoind.getState();
-      if (st.lastWatch && (!cs || st.lastWatch.checksum !== cs)) st.setLastWatch(null);
+    if (demo || !desc || !cs) {
+      if (!desc) last.current = "";
       return;
     }
     const st = useBitcoind.getState();
     if (st.lastWatch && st.lastWatch.checksum !== cs) st.setLastWatch(null);
-    if (last.current === cs) return;
-    const checkHit = st.lastCheck?.exportChecksum === cs || st.lastCheck?.checksum === cs;
-    const watchHit = st.lastWatch?.checksum === cs;
-    if (checkHit && watchHit) {
-      last.current = cs;
-      return;
-    }
+    const key = `${cs}|${electrum}|${status}`;
+    if (last.current === key) return;
     if (st.checking || st.scanningWatch) return;
-    last.current = cs;
-    if (!checkHit) void st.validate(desc);
-    if (!watchHit) void st.scanWatch(desc).catch(() => undefined);
-  }, [status, demo, cs, desc, checking, scanningWatch]);
+    last.current = key;
+    if (status === "ready") {
+      const checkHit = st.lastCheck?.exportChecksum === cs || st.lastCheck?.checksum === cs;
+      if (!checkHit) void st.validate(desc);
+    }
+    if (electrum.trim() && st.lastWatch?.checksum !== cs) void st.scanWatch(desc).catch(() => undefined);
+  }, [status, demo, electrum, cs, desc, checking, scanningWatch]);
 
   return null;
 }

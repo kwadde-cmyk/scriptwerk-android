@@ -19,7 +19,7 @@
     "start": "node scripts/host.mjs",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/auth/gate-identity.test.ts src/lib/bip329.test.ts src/lib/bitcoind/bitcoind.test.ts src/lib/miniscript/miniscript.test.ts src/lib/tx/psbt.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/auth/gate-identity.test.ts src/lib/bip329.test.ts src/lib/bitcoind/bitcoind.test.ts src/lib/bitcoind/derive-local.test.ts src/lib/miniscript/miniscript.test.ts src/lib/tx/psbt.test.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "build:apk-web": "node scripts/with-app-env.mjs npx vite build --config vite.apk.config.ts",
@@ -27,6 +27,7 @@
     "sync:web": "node scripts/sync-from-web.mjs"
   },
   "dependencies": {
+    "@bitcoinerlab/descriptors": "^3.2.0",
     "@electric-sql/pglite": "^0.5.4",
     "@hookform/resolvers": "^5.7.0",
     "@ledgerhq/hw-transport-webhid": "^6.36.0",

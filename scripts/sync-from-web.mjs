@@ -126,17 +126,21 @@ function classifyFetchError(err: unknown): Error {
 
   out = insertOnce(
     out,
-    "nativeElectrumLookup",
-    `async function electrumLookup(addresses: string[], server: string): Promise<UtxoScanResult> {
-  const unique = [...new Set(addresses.filter(Boolean))];
+    "nativeElectrumDeriveLookup",
+    `async function electrumLookup(
+  groups: { desc: string; from: number; to: number }[],
+  server: string,
+): Promise<UtxoScanResult & { groups: string[][] }> {
   const res = await fetch("/electrum", {`,
-    `async function electrumLookup(addresses: string[], server: string): Promise<UtxoScanResult> {
-  const unique = [...new Set(addresses.filter(Boolean))];
+    `async function electrumLookup(
+  groups: { desc: string; from: number; to: number }[],
+  server: string,
+): Promise<UtxoScanResult & { groups: string[][] }> {
   if (!server.trim()) throw new Error("hw.utxo.needElectrum");
   const { nativeRpcAvailable } = await import("./native-http.ts");
   if (nativeRpcAvailable()) {
-    const { nativeElectrumLookup } = await import("./native-electrum.ts");
-    return nativeElectrumLookup(unique, server);
+    const { nativeElectrumDeriveLookup } = await import("./native-electrum.ts");
+    return nativeElectrumDeriveLookup(groups, server);
   }
   const res = await fetch("/electrum", {`,
   );
@@ -561,7 +565,7 @@ try {
   const ver = bumpAndroidVersion(versionName, shaChanged);
   writeFileSync(join(root, ".web-upstream"), `${webSha}\n${WEB_REF}\n`);
 
-  assertContains(rpcPath, ["nativeRpcAvailable", "nativeElectrumLookup", "nativeElectrumPing"]);
+  assertContains(rpcPath, ["nativeRpcAvailable", "nativeElectrumDeriveLookup", "nativeElectrumPing"]);
   assertContains(join(root, "src/store/bitcoind.ts"), ["skipNodeBridge"]);
   assertContains(join(root, "src/lib/hw/types.ts"), ["hasWebHid()"]);
   assertContains(join(root, "src/lib/hw/ledger.ts"), ["installNativeUsbPolyfill"]);

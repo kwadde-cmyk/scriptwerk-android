@@ -41,7 +41,10 @@ export function UtxoScanPanel({
     setResult(null);
     setScanned(0);
     const node = useBitcoind.getState();
-    const cfg = { url: node.url, username: node.username, password: node.password };
+    const live = node.status === "ready" && !node.demo && Boolean(node.url.trim());
+    const cfg = live
+      ? { url: node.url, username: node.username, password: node.password }
+      : { url: "", username: "", password: "" };
     try {
       let from = 0;
       let merged: UtxoScanResult = { height: 0, total: 0, unspents: [] };
@@ -111,6 +114,8 @@ export function UtxoScanPanel({
           {result.unspents.length
             ? `${t("hw.utxo.found", { n: result.unspents.length, btc: formatBtc(result.total) })} · ${t("hw.utxo.scanned", { n: result.scanned ?? scanned })}`
             : t("hw.utxo.empty", { n: result.scanned ?? count })}
+          {result.coreMatch === true ? ` · ${t("hw.utxo.coreMatch")}` : ""}
+          {result.coreMatch === false ? ` · ${t("hw.utxo.coreSkip")}` : ""}
         </p>
       ) : null}
       {result?.unspents.length ? (

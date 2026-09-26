@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { btcToSats, buildPsbt, estimateVbytes, extractSignedTx, feeFromRate, inspectSignatures, planSpend, satsToDecimal } from "./psbt.ts";
+import { btcToSats, buildPsbt, estimateVbytes, extractSignedTx, feeFromRate, inspectSignatures, planPayments, planSpend, satsToDecimal } from "./psbt.ts";
 
 const ADDR = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
 const TXID = "11".repeat(32);
@@ -51,6 +51,18 @@ describe("unsigned psbt", () => {
         }),
       /tx\.err\.change/,
     );
+  });
+
+  it("builds when change is dust and flags it", () => {
+    const plan = planPayments({
+      coins: [{ txid: TXID, vout: 0, amountBtc: 0.001, address: ADDR }],
+      payments: [{ address: ADDR, sats: 99_500 }],
+      feeSats: 200,
+    });
+    assert.equal(plan.dustChange, true);
+    assert.equal(plan.outputs.length, 1);
+    assert.equal(plan.feeSats, 500);
+    assert.equal(buildPsbt(plan).startsWith("cHNidP"), true);
   });
 
   it("prices a fee from sat/vB", () => {

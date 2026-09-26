@@ -180,6 +180,34 @@ export async function nativeElectrumPing(server: string, sniFallback?: string): 
   }
 }
 
+async function deriveDescriptorAddresses(desc: string, from: number, to: number): Promise<string[]> {
+  const { Output } = await import("@bitcoinerlab/descriptors");
+  const body = String(desc ?? "").replace(/#[a-z0-9]+$/i, "");
+  const start = Math.max(0, Math.floor(Number(from) || 0));
+  const end = Math.min(start + 199, Math.max(start, Math.floor(Number(to) || start)));
+  const addresses: string[] = [];
+  for (let i = start; i <= end; i++) {
+    try {
+      addresses.push(new Output({ descriptor: body, index: i, checksumRequired: false }).getAddress());
+    } catch {
+      throw new Error("hw.utxo.derive");
+    }
+  }
+  return addresses;
+}
+
+export async function nativeElectrumDeriveLookup(
+  groups: { desc: string; from: number; to: number }[],
+  server: string,
+): Promise<UtxoScanResult & { groups: string[][] }> {
+  const lists: string[][] = [];
+  for (const g of groups) lists.push(await deriveDescriptorAddresses(g.desc, g.from, g.to));
+  const addresses = lists.flat();
+  if (!addresses.length) throw new Error("hw.utxo.none");
+  const scanned = await nativeElectrumLookup(addresses, server);
+  return { ...scanned, groups: lists };
+}
+
 export async function nativeElectrumLookup(addresses: string[], server: string): Promise<UtxoScanResult> {
   const target = assertNativeTarget(server);
   const unique = [...new Set(addresses.filter(Boolean))];

@@ -17,6 +17,7 @@ export type SpendPlan = {
   feeSats: number;
   inputSats: number;
   rbf: boolean;
+  dustChange?: boolean;
 };
 
 export function satsFromDecimal(text: string): number {
@@ -94,14 +95,18 @@ export function planSpend(opts: {
 
   const outputs: { address: string; sats: number }[] = [{ address: payTo, sats: paySats }];
   const changeSats = budget - paySats;
-  if (changeSats > 0) {
-    if (changeSats < DUST_SATS) throw new Error("tx.dust");
+  let dustChange = false;
+  let fee = feeSats;
+  if (changeSats > 0 && changeSats < DUST_SATS) {
+    dustChange = true;
+    fee += changeSats;
+  } else if (changeSats > 0) {
     const change = (opts.changeAddress || "").trim();
     if (!change) throw new Error("tx.err.change");
     scriptPubKeyFromAddress(change);
     outputs.push({ address: change, sats: changeSats });
   }
-  return { inputs, outputs, feeSats, inputSats, rbf: opts.rbf !== false };
+  return { inputs, outputs, feeSats: fee, inputSats, rbf: opts.rbf !== false, dustChange };
 }
 
 export function planPayments(opts: {
@@ -126,14 +131,18 @@ export function planPayments(opts: {
   if (inputSats < paySats + feeSats) throw new Error("tx.funds");
   const outputs = payments.map((p) => ({ address: p.address.trim(), sats: Math.floor(p.sats) }));
   const changeSats = inputSats - paySats - feeSats;
-  if (changeSats > 0) {
-    if (changeSats < DUST_SATS) throw new Error("tx.dust");
+  let dustChange = false;
+  let fee = feeSats;
+  if (changeSats > 0 && changeSats < DUST_SATS) {
+    dustChange = true;
+    fee += changeSats;
+  } else if (changeSats > 0) {
     const change = (opts.changeAddress || "").trim();
     if (!change) throw new Error("tx.err.change");
     scriptPubKeyFromAddress(change);
     outputs.push({ address: change, sats: changeSats });
   }
-  return { inputs, outputs, feeSats, inputSats, rbf: opts.rbf !== false };
+  return { inputs, outputs, feeSats: fee, inputSats, rbf: opts.rbf !== false, dustChange };
 }
 
 export function addressFromScan(text: string): string {

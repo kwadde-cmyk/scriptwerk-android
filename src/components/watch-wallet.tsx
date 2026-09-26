@@ -43,14 +43,13 @@ export function WatchWalletPanel() {
   const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const labels = useStudio((s) => s.labels);
   const importBip329 = useStudio((s) => s.importBip329);
-  const status = useBitcoind((s) => s.status);
   const demo = useBitcoind((s) => s.demo);
   const electrum = useBitcoind((s) => s.electrum);
   const lastWatch = useBitcoind((s) => s.lastWatch);
   const scanningWatch = useBitcoind((s) => s.scanningWatch);
   const scanWatch = useBitcoind((s) => s.scanWatch);
   const setOpen = useBitcoind((s) => s.setOpen);
-  const ready = status === "ready" && !demo;
+  const canScan = !demo && Boolean(electrum.trim());
   const [count, setCount] = useState(20);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<CoinSort>("age");
@@ -134,7 +133,7 @@ export function WatchWalletPanel() {
   }, [snap]);
 
   async function run() {
-    if (!ready || !compiled?.ok) return;
+    if (!canScan || !compiled?.ok) return;
     const n = clampUtxoCount(count);
     setCount(n);
     setError(null);
@@ -226,15 +225,17 @@ export function WatchWalletPanel() {
               ? ` · ${t("wallet.mempool", { amount: formatAmount(snap.unconfirmed, unit, nloc).label })}`
               : ""}
             {snap.height ? ` · ${t("wallet.tip", { n: snap.height.toLocaleString(nloc) })}` : ""}
+            {snap.coreMatch === true ? ` · ${t("hw.utxo.coreMatch")}` : ""}
+            {snap.coreMatch === false ? ` · ${t("hw.utxo.coreSkip")}` : ""}
           </p>
         ) : (
           <p className="mt-1 text-2xs text-fg-muted">{t("wallet.needScan")}</p>
         )}
       </section>
 
-      {!ready ? (
+      {!canScan ? (
         <div className="space-y-2">
-          <p className="text-xs text-fg-muted">{demo ? t("wallet.noDemo") : t("wallet.needNode")}</p>
+          <p className="text-xs text-fg-muted">{demo ? t("wallet.noDemo") : t("wallet.needElectrum")}</p>
           <Button type="button" onClick={() => setOpen(true)}>
             {t("node.open")}
           </Button>
@@ -258,7 +259,6 @@ export function WatchWalletPanel() {
           </Button>
         </div>
       )}
-      {ready && !electrum ? <p className="text-2xs text-warn">{t("wallet.needElectrum")}</p> : null}
       {scanningWatch && snap?.scanned ? (
         <p className="text-2xs text-fg-muted">{t("hw.utxo.scanned", { n: snap.scanned })}</p>
       ) : null}

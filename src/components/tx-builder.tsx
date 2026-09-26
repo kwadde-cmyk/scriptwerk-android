@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { QrCode } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { QrCode, Trash2 } from "lucide-react";
 import { addressFromScan, btcToSats, buildPsbt, estimateVbytes, extractSignedTx, feeFromRate, inspectSignatures, planPayments, satsFromDecimal, satsToDecimal } from "@/lib/tx/psbt";
 import { formatAmount, type UtxoHit, type WatchAddr } from "@/lib/hw/address-check";
 import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
@@ -13,10 +13,9 @@ import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CopyButton } from "@/components/copy-button";
-import { FilePick, QrPreview, QrScanner } from "@/components/qr-io";
+import { QrPreview, QrScanner } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
 import { localizeMessage, numberLocale } from "@/lib/i18n";
 import type { HwKind } from "@/lib/hw";
@@ -88,6 +87,8 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
   const [changeEdited, setChangeEdited] = useState(false);
   const [rate, setRate] = useState("2");
   const [psbt, setPsbt] = useState("");
+  const [showQr, setShowQr] = useState(false);
+  const [dustWarn, setDustWarn] = useState(false);
   const [feeOnChange, setFeeOnChange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -109,6 +110,8 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
   const feeSats = feeFromRate(Number(rate.replace(",", ".")), vbytes);
   const canFromChange = inputSats - gross - feeSats >= 546;
   const useChange = feeOnChange && canFromChange;
+  const changeLeft = useChange ? inputSats - gross - feeSats : inputSats - gross;
+  const dustChange = selected.length > 0 && entered.some((r) => rowSats(r) > 0) && changeLeft > 0 && changeLeft < 546;
 
   function confirmPick() {
     setPicked(draft);
@@ -119,6 +122,8 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
   function build() {
     setError(null);
     setPsbt("");
+    setShowQr(false);
+    setDustWarn(false);
     try {
       const plan = planPayments({
         coins: selected.map(asCoin),
@@ -130,6 +135,7 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
         feeSats,
         changeAddress: changeValue,
       });
+      setDustWarn(Boolean(plan.dustChange));
       setPsbt(buildPsbt(plan));
     } catch (e) {
       setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.funds"));
@@ -147,13 +153,27 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
         <span className="ml-2 text-2xs text-fg-muted">{t("tx.coinN", { n: String(selected.length) })}</span>
       </p>
       {rows.map((row, i) => (
-        <div key={row.id} className="grid gap-2 sm:grid-cols-[1fr_8rem_auto]">
-          <AddressField
-            id={`tx-to-${row.id}`}
-            label={i === 0 ? t("tx.to") : t("tx.toMore")}
-            value={row.address}
-            onChange={(address) => setRows((cur) => cur.map((r) => (r.id === row.id ? { ...r, address } : r)))}
-          />
+        <div key={row.id} className="space-y-2">
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <AddressField
+                id={`tx-to-${row.id}`}
+                label={i === 0 ? t("tx.to") : t("tx.toMore")}
+                value={row.address}
+                onChange={(address) => setRows((cur) => cur.map((r) => (r.id === row.id ? { ...r, address } : r)))}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label={t("tx.remove")}
+              disabled={rows.length < 2}
+              onClick={() => setRows((cur) => cur.filter((r) => r.id !== row.id))}
+            >
+              <Trash2 />
+            </Button>
+          </div>
           <div>
             <Label htmlFor={`tx-amt-${row.id}`}>{t("tx.amount")}</Label>
             <div className="mt-1 flex gap-2">
@@ -184,16 +204,6 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
               </Button>
             </div>
           </div>
-          <div className="flex items-end">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={rows.length < 2}
-              onClick={() => setRows((cur) => cur.filter((r) => r.id !== row.id))}
-            >
-              {t("tx.remove")}
-            </Button>
-          </div>
         </div>
       ))}
       <Button type="button" variant="outline" onClick={() => setRows((cur) => [...cur, newRow()])}>
@@ -223,8 +233,11 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
         </Button>
       </div>
       <p className="text-2xs text-fg-muted">{t(useChange ? "tx.feeOnChange" : "tx.feeOnAmount", { vb: String(vbytes), sats: String(feeSats) })}</p>
+      {dustChange ? <p className="text-xs text-pretty text-warn">{t("tx.dustChange", { sats: String(changeLeft) })}</p> : null}
+      <Button type="button" onClick={build} disabled={!selected.length || pathIndex == null}>{t("tx.build")}</Button>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={build} disabled={!selected.length || pathIndex == null}>{t("tx.build")}</Button>
+        <Button type="button" variant="outline" disabled={!psbt} onClick={() => downloadPsbt(psbt, "scriptwerk-send.psbt")}>{t("tx.exportFile")}</Button>
+        <Button type="button" variant="outline" disabled={!psbt} onClick={() => setShowQr((v) => !v)}>{t("tx.exportQr")}</Button>
         <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "ledger", setBusy, setPsbt, setError, locale)}>
           {busy === "ledger" ? t("tx.signing") : t("tx.ledger")}
         </Button>
@@ -233,7 +246,8 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
         </Button>
       </div>
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
-      {psbt ? <PsbtExport value={psbt} name="scriptwerk-send.psbt" /> : null}
+      {dustWarn && !dustChange ? <p className="text-xs text-pretty text-warn">{t("tx.dustChange", { sats: String(changeLeft) })}</p> : null}
+      {showQr && psbt ? <QrPreview value={psbt} label={t("tx.exportQr")} compact /> : null}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -405,6 +419,8 @@ function BroadcastPane({ required }: { required: number }) {
   const status = useBitcoind((s) => s.status);
   const demo = useBitcoind((s) => s.demo);
   const [signed, setSigned] = useState("");
+  const [importQr, setImportQr] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [txid, setTxid] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -437,7 +453,6 @@ function BroadcastPane({ required }: { required: number }) {
     <section className="space-y-2 border-t border-border pt-4">
       <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("tx.signed")}</h2>
       <p className="text-2xs text-pretty text-fg-muted">{t("tx.signedBlurb")}</p>
-      <Textarea value={signed} onChange={(e) => setSigned(e.target.value)} className="min-h-24" spellCheck={false} />
       {report ? (
         <ul className="space-y-1">
           {report.inputs.length === 0 ? <li className="text-xs text-fg-muted">{t("tx.sigRaw")}</li> : null}
@@ -458,14 +473,45 @@ function BroadcastPane({ required }: { required: number }) {
         </ul>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <FilePick accept=".psbt,.txn,.txt,.hex,text/plain" label={t("tx.file")} onRead={setSigned} />
+        <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>{t("tx.file")}</Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".psbt,.txn,application/octet-stream"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void readPsbtFile(file).then(setSigned);
+          }}
+        />
+        <Button type="button" variant="outline" onClick={() => setImportQr(true)}>{t("tx.exportQr")}</Button>
         <Button type="button" onClick={() => void send()} disabled={sending || !signed.trim() || status !== "ready" || demo}>
           {sending ? t("tx.sending") : t("tx.broadcast")}
         </Button>
       </div>
+      <Dialog open={importQr} onOpenChange={setImportQr}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("tx.scan")}</DialogTitle>
+            <DialogDescription>{t("tx.signed")}</DialogDescription>
+          </DialogHeader>
+          <QrScanner
+            onRead={(text) => {
+              setSigned(text.trim());
+              setImportQr(false);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
       {status !== "ready" || demo ? <p className="text-xs text-fg-muted">{t("tx.needNode")}</p> : null}
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
-      {txid ? <p className="break-all font-mono text-xs">{txid} <CopyButton value={txid} label={t("tx.copyTxid")} /></p> : null}
+      {txid ? (
+        <div className="flex items-start gap-1">
+          <p className="min-w-0 flex-1 break-all font-mono text-xs">{txid}</p>
+          <CopyButton value={txid} label={t("tx.copyTxid")} />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -528,6 +574,15 @@ function downloadPsbt(b64: string, name: string) {
 function rowSats(row: PayRow): number {
   const n = satsFromDecimal(row.amount);
   return Number.isFinite(n) ? n : 0;
+}
+
+async function readPsbtFile(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const binary = bytes.length > 4 && bytes[0] === 0x70 && bytes[1] === 0x73 && bytes[2] === 0x62 && bytes[3] === 0x74;
+  if (!binary) return new TextDecoder().decode(bytes).trim();
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
 }
 
 function applyFee(

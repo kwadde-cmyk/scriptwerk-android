@@ -144,6 +144,7 @@ export interface UtxoScanResult {
   total: number;
   unspents: UtxoHit[];
   scanned?: number;
+  coreMatch?: boolean;
 }
 
 export function mergeUtxoResults(a: UtxoScanResult, b: UtxoScanResult): UtxoScanResult {
@@ -158,6 +159,7 @@ export function mergeUtxoResults(a: UtxoScanResult, b: UtxoScanResult): UtxoScan
     total: unspents.reduce((s, u) => s + u.amount, 0),
     unspents,
     scanned: Math.max(a.scanned ?? 0, b.scanned ?? 0),
+    coreMatch: a.coreMatch === false || b.coreMatch === false ? false : a.coreMatch || b.coreMatch,
   };
 }
 
@@ -275,6 +277,7 @@ export interface WatchSnapshot {
   unconfirmed: number;
   scanned: number;
   checksum: string;
+  coreMatch?: boolean;
   addresses: WatchAddr[];
   unspents: UtxoHit[];
 }
@@ -285,6 +288,7 @@ export function buildWatchSnapshot(opts: {
   unspents: UtxoHit[];
   scanned: number;
   checksum?: string;
+  coreMatch?: boolean;
 }): WatchSnapshot {
   const byAddr = new Map<string, { amount: number; coins: number }>();
   let confirmed = 0;
@@ -321,6 +325,7 @@ export function buildWatchSnapshot(opts: {
     unconfirmed,
     scanned: Math.max(0, Math.floor(Number(opts.scanned) || 0)),
     checksum: opts.checksum ?? "",
+    coreMatch: opts.coreMatch,
     addresses,
     unspents: opts.unspents,
   };
@@ -337,6 +342,7 @@ export function mergeWatchSnapshots(a: WatchSnapshot, b: WatchSnapshot): WatchSn
     unspents: merged.unspents,
     scanned: Math.max(a.scanned, b.scanned, merged.scanned ?? 0),
     checksum: b.checksum || a.checksum,
+    coreMatch: a.coreMatch === false || b.coreMatch === false ? false : a.coreMatch || b.coreMatch,
   });
 }
 

@@ -311,8 +311,9 @@ export const useBitcoind = create<BitcoindState>()(
       },
       setLastUtxo: (u) => set({ lastUtxo: u }),
       scanWatch: async (descriptor, opts) => {
-        const { demo, status, url, username, password, electrum } = get();
-        if (status !== "ready" || demo) return null;
+        const { demo, electrum, status, url, username, password } = get();
+        if (demo) return null;
+        if (!electrum.trim()) throw new Error("hw.utxo.needElectrum");
         const n = clampUtxoCount(opts?.count ?? 20);
         const checksum = checksumOf(descriptor);
         const gen = ++watchGen;
@@ -322,7 +323,10 @@ export const useBitcoind = create<BitcoindState>()(
           ...(stale ? { lastWatch: null, lastUtxo: null } : {}),
         });
         try {
-          const cfg = { url: normalizeRpcUrl(url), username, password };
+          const cfg =
+            status === "ready" && url.trim()
+              ? { url: normalizeRpcUrl(url), username, password }
+              : { url: "", username: "", password: "" };
           let from = 0;
           let merged: WatchSnapshot | null = null;
           while (from < UTXO_SCAN_CAP) {

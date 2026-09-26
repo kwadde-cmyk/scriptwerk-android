@@ -293,6 +293,7 @@ function AddressCheckPanel({
   const getWalletAddress = useHardware((s) => s.getWalletAddress);
   const nodeStatus = useBitcoind((s) => s.status);
   const nodeDemo = useBitcoind((s) => s.demo);
+  const electrum = useBitcoind((s) => s.electrum);
   const probe = useBitcoind((s) => s.probe);
   const [from, setFrom] = useState(0);
   const [to, setTo] = useState(0);
@@ -548,8 +549,8 @@ function AddressCheckPanel({
         </div>
       ) : null}
       <UtxoScanPanel
-        enabled={ok && nodeStatus === "ready" && !nodeDemo && !disabled && !working}
-        hint={ok ? t("hw.utxo.blurb") : t("hw.utxo.needMatch")}
+        enabled={Boolean(electrum.trim()) && !nodeDemo && !disabled && !working}
+        hint={electrum.trim() ? t("hw.utxo.blurb") : t("hw.utxo.needElectrum")}
         receive={receive}
         change={change}
       />
