@@ -31,6 +31,7 @@ import { SheetQr } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
 import { usePolicyTitle } from "@/components/policy-title";
 import { ScrollText } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const addrCache = { list: [] as string[] };
 const printGate = { on: false, listeners: new Set<() => void>() };
@@ -50,14 +51,16 @@ export function RecoverySheetButton() {
           <ScrollText />
         </Button>
       </DialogTrigger>
-      <DialogContent className="flex max-h-[min(92dvh,56rem)] w-[min(52rem,calc(100vw-1rem))] flex-col overflow-hidden print:hidden">
+      <DialogContent className="grid max-h-[min(92dvh,56rem)] w-[min(52rem,calc(100vw-1rem))] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden print:hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle>{t("recovery.title")}</DialogTitle>
           <DialogDescription>{t("recovery.blurb")}</DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-lg bg-white p-4 text-neutral-900">
-          <RecoveryDocument />
-        </div>
+        <ScrollArea className="h-full min-h-0 rounded-lg bg-white text-neutral-900">
+          <div className="p-4">
+            <RecoveryDocument />
+          </div>
+        </ScrollArea>
         <div className="flex shrink-0 justify-end pt-2">
           <Button
             onClick={() => {

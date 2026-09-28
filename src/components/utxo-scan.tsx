@@ -7,6 +7,7 @@ import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { CopyButton } from "@/components/copy-button";
 import { useT } from "@/lib/use-t";
 import { localizeMessage } from "@/lib/i18n";
@@ -120,7 +121,7 @@ export function UtxoScanPanel({
         </p>
       ) : null}
       {result?.unspents.length ? (
-        <div className="max-h-48 overflow-auto">
+        <ScrollArea className="max-h-48">
           <table className="w-full text-left font-mono text-2xs">
             <thead className="text-fg-subtle">
               <tr>
@@ -148,7 +149,7 @@ export function UtxoScanPanel({
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       ) : null}
     </div>
   );

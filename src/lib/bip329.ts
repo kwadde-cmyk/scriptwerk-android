@@ -22,10 +22,6 @@ export interface StoredLabel {
   spendable?: boolean;
 }
 
-export function isBip329Type(v: unknown): v is Bip329Type {
-  return typeof v === "string" && (BIP329_TYPES as readonly string[]).includes(v);
-}
-
 const TYPE_ALIAS: Record<string, Bip329Type> = {
   addr: "addr",
   address: "addr",

@@ -576,22 +576,21 @@ export async function scanDescriptorUtxos(
     opts.from ?? 0,
   );
   if (!objects.length) throw new Error("hw.utxo.derive");
-  const ranged: { desc: string; from: number; to: number; addresses?: string[] }[] = [];
-  for (const o of objects) {
-    const addresses = await coreAddresses(config, o.desc, o.range[0], o.range[1]);
-    ranged.push({ desc: o.desc, from: o.range[0], to: o.range[1], addresses: addresses ?? undefined });
-  }
+  const ranged = await Promise.all(
+    objects.map(async (o) => {
+      const addresses = await coreAddresses(config, o.desc, o.range[0], o.range[1]);
+      return { desc: o.desc, from: o.range[0], to: o.range[1], addresses: addresses ?? undefined };
+    }),
+  );
   const fromCore = ranged.every((g) => g.addresses?.length);
   const res = await electrumLookup(ranged, opts.electrum ?? "");
   let coreMatch: boolean | undefined = fromCore ? true : undefined;
   if (!fromCore) {
-    for (let i = 0; i < objects.length; i++) {
-      const o = objects[i]!;
-      const list = res.groups[i] ?? [];
-      const agreed = await agreeWithCore(config, o.desc, o.range[0], o.range[1], list);
-      if (agreed === false) coreMatch = false;
-      else if (agreed === true && coreMatch !== false) coreMatch = true;
-    }
+    const agreed = await Promise.all(
+      objects.map((o, i) => agreeWithCore(config, o.desc, o.range[0], o.range[1], res.groups[i] ?? [])),
+    );
+    if (agreed.some((v) => v === false)) coreMatch = false;
+    else if (agreed.some((v) => v === true)) coreMatch = true;
   }
   const last = objects[0]?.range[1] ?? -1;
   return { ...res, scanned: last + 1, coreMatch, more: res.more };
@@ -615,11 +614,12 @@ export async function scanWatchWallet(
     kind: b.kind,
     desc: descriptorForBranch(descriptor, b.change),
   }));
-  const ranged: { desc: string; from: number; to: number; addresses?: string[] }[] = [];
-  for (const spec of specs) {
-    const addresses = await coreAddresses(config, spec.desc, from, end);
-    ranged.push({ desc: spec.desc, from, to: end, addresses: addresses ?? undefined });
-  }
+  const ranged = await Promise.all(
+    specs.map(async (spec) => {
+      const addresses = await coreAddresses(config, spec.desc, from, end);
+      return { desc: spec.desc, from, to: end, addresses: addresses ?? undefined };
+    }),
+  );
   const fromCore = ranged.every((g) => g.addresses?.length);
   const res = await electrumLookup(ranged, opts.electrum ?? "");
   const labeled: { address: string; kind: AddressKind; index: number }[] = [];
@@ -629,11 +629,11 @@ export async function scanWatchWallet(
   });
   let coreMatch: boolean | undefined = fromCore ? true : undefined;
   if (!fromCore) {
-    for (let i = 0; i < specs.length; i++) {
-      const agreed = await agreeWithCore(config, specs[i]!.desc, from, end, res.groups[i] ?? []);
-      if (agreed === false) coreMatch = false;
-      else if (agreed === true && coreMatch !== false) coreMatch = true;
-    }
+    const agreed = await Promise.all(
+      specs.map((spec, i) => agreeWithCore(config, spec.desc, from, end, res.groups[i] ?? [])),
+    );
+    if (agreed.some((v) => v === false)) coreMatch = false;
+    else if (agreed.some((v) => v === true)) coreMatch = true;
   }
   return {
     ...buildWatchSnapshot({

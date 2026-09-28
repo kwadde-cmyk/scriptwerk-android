@@ -554,10 +554,6 @@ export function parseWalletPolicy(text: string): Bip388Policy | null {
   return parseJsonPolicy(raw) ?? parseTextPolicy(raw);
 }
 
-export function looksLikeWalletPolicy(text: string): boolean {
-  return parseWalletPolicy(text) !== null;
-}
-
 export function materializeWalletPolicy(
   policy: Bip388Policy,
   existing: KeyEntry[],

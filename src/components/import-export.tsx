@@ -24,6 +24,7 @@ import { RecoverySheetButton } from "@/components/recovery-sheet";
 import { HardwareButton } from "@/components/hardware-usb";
 import { NodeButton } from "@/components/node-rpc";
 import { ScriptHighlight } from "@/components/script-view";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useHardware } from "@/store/hardware";
 import { useT } from "@/lib/use-t";
 import { Download, FolderOpen, QrCode, Redo2, RotateCcw, Undo2, Usb } from "lucide-react";
@@ -210,11 +211,13 @@ export function ImportExportBar() {
             <QrCode />
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-h-[min(720px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-1.5rem))] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="grid max-h-[min(720px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t("export.title")}</DialogTitle>
             <DialogDescription>{t("export.blurb")}</DialogDescription>
           </DialogHeader>
+          <ScrollArea className="h-full min-h-0">
+          <div className="pr-3">
           {compiled && !compiled.ok ? (
             <p className="text-sm text-danger">{compiled.error}</p>
           ) : (
@@ -283,6 +286,8 @@ export function ImportExportBar() {
               <Download /> {t("export.files")}
             </Button>
           </div>
+          </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
 
@@ -349,7 +354,7 @@ function DeviceExport({
         </p>
         <ScriptHighlight
           value={result.policy.template}
-          className="max-h-24 overflow-auto rounded-lg border border-border bg-ink px-3 py-2 font-mono text-2xs leading-relaxed break-all whitespace-pre-wrap"
+          className="max-h-24"
         />
       </div>
       <div className="flex flex-wrap gap-2">
@@ -406,7 +411,7 @@ function CopyText({ value }: { value: string }) {
     <div className="space-y-2">
       <ScriptHighlight
         value={value}
-        className="max-h-40 overflow-auto rounded-lg border border-border bg-ink px-3 py-2 font-mono text-2xs leading-relaxed break-all whitespace-pre-wrap"
+        className="max-h-40"
       />
       <Button
         variant="outline"

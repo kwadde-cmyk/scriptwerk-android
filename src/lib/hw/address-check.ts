@@ -204,10 +204,6 @@ export function formatBtc(n: number): string {
   return (Number.isFinite(n) ? n : 0).toFixed(8);
 }
 
-export function formatBtcTrim(n: number): string {
-  return formatBtc(n).replace(/0+$/, "").replace(/\.$/, "") || "0";
-}
-
 export type AmountUnit = "btc" | "sats" | "auto";
 
 export function isAmountUnit(v: unknown): v is AmountUnit {
@@ -346,9 +342,5 @@ export function mergeWatchSnapshots(a: WatchSnapshot, b: WatchSnapshot): WatchSn
     checksum: b.checksum || a.checksum,
     coreMatch: a.coreMatch === false || b.coreMatch === false ? false : a.coreMatch || b.coreMatch,
   });
-}
-
-export function watchSnapshotHasActivity(s: WatchSnapshot): boolean {
-  return s.unspents.length > 0 || s.addresses.some((a) => a.coins > 0);
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   accountPathFrom,
   applyKeyMaterial,
@@ -35,24 +35,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useT } from "@/lib/use-t";
 import { CopyButton, Copyable } from "@/components/copy-button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { KeyRound, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 
 export function KeyBoard({ fill = false }: { fill?: boolean }) {
   const { t } = useT();
   const rawKeys = useStudio((s) => s.keys);
-  const keys = rawKeys.map(normalizeKeyEntry);
+  const keys = useMemo(() => rawKeys.map(normalizeKeyEntry), [rawKeys]);
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
   const removeUnusedKeys = useStudio((s) => s.removeUnusedKeys);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const details = keys.find((k) => k.id === detailsId) ?? null;
-  const aliases = reuseAliasHints(stages, reuseKeys);
-  const masters = new Set(stages.flatMap((s) => s.keys));
-  const visible = sortKeyEntries(
-    stages.length ? keys.filter((k) => !isDerivedAlias(k.name, masters)) : keys,
-    stages,
+  const aliases = useMemo(() => reuseAliasHints(stages, reuseKeys), [stages, reuseKeys]);
+  const masters = useMemo(() => new Set(stages.flatMap((s) => s.keys)), [stages]);
+  const visible = useMemo(
+    () => sortKeyEntries(stages.length ? keys.filter((k) => !isDerivedAlias(k.name, masters)) : keys, stages),
+    [keys, stages, masters],
   );
   const unusedCount = visible.filter((k) => !masters.has(k.name)).length;
   const childPresent = visible.reduce((n, k) => n + k.children.filter((c) => c.xpub.trim()).length, 0);
@@ -83,7 +84,8 @@ export function KeyBoard({ fill = false }: { fill?: boolean }) {
           </Button>
         ) : null}
       </div>
-      <div className={fill ? "min-h-0 flex-1 overflow-auto px-4 pb-3" : "max-h-40 overflow-auto px-4 pb-3"}>
+      <ScrollArea className={fill ? "min-h-0 flex-1" : "max-h-40"}>
+        <div className="px-4 pb-3">
         {visible.length === 0 ? (
           <p className="py-2 text-xs text-fg-muted">{t("keys.empty")}</p>
         ) : (
@@ -126,7 +128,8 @@ export function KeyBoard({ fill = false }: { fill?: boolean }) {
             ))}
           </div>
         )}
-      </div>
+        </div>
+      </ScrollArea>
       <KeyImportDialog entry={details} open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()} />
     </div>
   );
@@ -562,7 +565,7 @@ function KeyImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={openDetailsFrom}>
-      <DialogContent className="flex max-h-[min(720px,calc(100dvh-2rem))] w-[min(720px,calc(100vw-1rem))] flex-col overflow-hidden">
+      <DialogContent className="grid max-h-[min(720px,calc(100dvh-2rem))] w-[min(720px,calc(100vw-1rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-1">
             {entry.note.trim() || t("keys.unnamed")}
@@ -574,7 +577,7 @@ function KeyImportDialog({
           </DialogTitle>
           <DialogDescription>{t("keys.dialogBlurb")}</DialogDescription>
         </DialogHeader>
-        <Tabs defaultValue="master" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <Tabs defaultValue="master" className="flex h-full min-h-0 flex-col overflow-hidden">
           <TabsList className="w-full shrink-0">
             <TabsTrigger value="master" className="flex-1">
               {t("keys.master")}
@@ -586,7 +589,9 @@ function KeyImportDialog({
               {t("keys.details")}
             </TabsTrigger>
           </TabsList>
-          <TabsContent value="master" className="min-h-0 flex-1 space-y-3 overflow-auto">
+          <TabsContent value="master" className="min-h-0 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+            <div className="space-y-3 pr-3">
             <Field label={t("keys.name")}>
               <Input
                 value={entry.note}
@@ -665,8 +670,12 @@ function KeyImportDialog({
                 </p>
               ) : null}
             </ImportPane>
+            </div>
+            </ScrollArea>
           </TabsContent>
-          <TabsContent value="children" className="min-h-0 flex-1 space-y-3 overflow-auto">
+          <TabsContent value="children" className="min-h-0 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+            <div className="space-y-3 pr-3">
             {filled || entry.fingerprint ? (
               <>
                 {reuseKeys ? <ReusePlan needs={needs} /> : null}
@@ -745,11 +754,17 @@ function KeyImportDialog({
             ) : (
               <p className="text-sm text-fg-muted">{t("keys.childNeedParent")}</p>
             )}
+            </div>
+            </ScrollArea>
           </TabsContent>
-          <TabsContent value="details" className="min-h-0 flex-1 space-y-3 overflow-auto">
+          <TabsContent value="details" className="min-h-0 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+            <div className="space-y-3 pr-3">
             <p className="text-2xs text-fg-muted">{t("keys.detailsTogether")}</p>
             <p className="text-2xs text-fg-muted">{t("keys.xpubTap")}</p>
             <KeySlotTree entry={entry} needs={needs} stages={stages} reuse={reuseKeys} />
+            </div>
+            </ScrollArea>
           </TabsContent>
         </Tabs>
       </DialogContent>

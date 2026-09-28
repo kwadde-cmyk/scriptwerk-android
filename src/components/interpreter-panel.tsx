@@ -266,8 +266,8 @@ function OrderVariants() {
               spellCheck={false}
             />
           </div>
-          <div className="mt-3 max-h-[min(28rem,calc(100dvh-16rem))] overflow-y-auto overscroll-contain pr-1">
-            <ul className="space-y-1.5 pb-2">
+          <ScrollArea className="mt-3 max-h-[min(28rem,calc(100dvh-16rem))]">
+            <ul className="space-y-1.5 pr-3 pb-2">
               {hits.length ? (
                 hits.map((v) => {
                   const active = v.checksum === current;
@@ -309,7 +309,7 @@ function OrderVariants() {
                 <li className="px-1 py-6 text-center text-sm text-fg-muted">{t("read.orderNone")}</li>
               )}
             </ul>
-          </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </section>

@@ -1,6 +1,6 @@
 import type { KeyEntry } from "./keys.ts";
 import type { MsNode } from "./ast.ts";
-import { descsumCheck, descsumCreate, stripChecksum } from "./checksum.ts";
+import { descsumCreate, stripChecksum } from "./checksum.ts";
 import { compileDescriptor, compileDescriptorCached } from "./compile.ts";
 import { compileStages, inferNesting, liftIncompleteReason, type Nesting, type Stage } from "./stages.ts";
 import type { ParseResult } from "./parser.ts";
@@ -145,11 +145,4 @@ export function classifyImportedPolicy(opts: {
 
 export function assertImportableText(text: string): string | null {
   return rejectSecrets(text) ?? rejectTaproot(text);
-}
-
-export function checksumLooksWrong(src: string): boolean {
-  const compact = src.replace(/\s+/g, "");
-  const hash = compact.lastIndexOf("#");
-  if (hash < 0 || !/^[a-z0-9]{8}$/i.test(compact.slice(hash + 1))) return false;
-  return !descsumCheck(compact);
 }

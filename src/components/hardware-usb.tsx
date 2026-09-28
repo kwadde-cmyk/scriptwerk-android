@@ -31,6 +31,7 @@ import { useT } from "@/lib/use-t";
 import { localizeMessage } from "@/lib/i18n";
 import { CopyButton, Copyable } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { UtxoScanPanel } from "@/components/utxo-scan";
 import { Usb } from "lucide-react";
 import { toast } from "sonner";
@@ -107,11 +108,13 @@ function HardwareDialogBody() {
   }
 
   return (
-    <DialogContent className="max-h-[min(720px,calc(100dvh-2rem))] w-[min(520px,calc(100vw-1.5rem))] overflow-y-auto">
-      <DialogHeader>
+    <DialogContent className="grid max-h-[min(720px,calc(100dvh-2rem))] w-[min(520px,calc(100vw-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+      <DialogHeader className="shrink-0">
         <DialogTitle>{t("hw.title")}</DialogTitle>
         <DialogDescription>{t("hw.blurb")}</DialogDescription>
       </DialogHeader>
+      <ScrollArea className="h-full min-h-0">
+      <div className="pr-3">
 
       {hid === "missing" ? <p className="text-xs text-warn">{t("hw.needChrome")}</p> : null}
       {hid === "iframe" ? <p className="text-xs text-warn">{t("hw.iframe")}</p> : null}
@@ -272,6 +275,8 @@ function HardwareDialogBody() {
           ) : null}
         </div>
       ) : null}
+      </div>
+      </ScrollArea>
     </DialogContent>
   );
 }
@@ -507,7 +512,7 @@ function AddressCheckPanel({
         </p>
       ) : null}
       {rows.length ? (
-        <div className="max-h-56 overflow-auto">
+        <ScrollArea className="max-h-56">
           <table className="w-full text-left font-mono text-2xs">
             <thead className="text-fg-subtle">
               <tr>
@@ -546,7 +551,7 @@ function AddressCheckPanel({
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       ) : null}
       <UtxoScanPanel
         enabled={Boolean(electrum.trim()) && !nodeDemo && !disabled && !working}

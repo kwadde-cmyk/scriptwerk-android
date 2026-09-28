@@ -22,10 +22,6 @@ export function hole(hint?: string): MsNode {
   return { id: uid(), kind: "hole", hint };
 }
 
-export function isHole(n: MsNode): n is Extract<MsNode, { kind: "hole" }> {
-  return n.kind === "hole";
-}
-
 export function visit(node: MsNode, fn: (n: MsNode) => void): void {
   fn(node);
   switch (node.kind) {

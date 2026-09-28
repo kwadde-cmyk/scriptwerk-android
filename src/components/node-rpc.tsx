@@ -21,6 +21,7 @@ import { useT } from "@/lib/use-t";
 import { localizeMessage } from "@/lib/i18n";
 import { CopyButton } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { UtxoScanPanel } from "@/components/utxo-scan";
 import { Loader2, Server } from "lucide-react";
 import { toast } from "sonner";
@@ -165,11 +166,13 @@ function NodeDialogBody() {
   }
 
   return (
-    <DialogContent className="max-h-[min(720px,calc(100dvh-2rem))] w-[min(520px,calc(100vw-1.5rem))] overflow-y-auto">
-      <DialogHeader>
+    <DialogContent className="grid max-h-[min(720px,calc(100dvh-2rem))] w-[min(520px,calc(100vw-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+      <DialogHeader className="shrink-0">
         <DialogTitle>{t("node.title")}</DialogTitle>
         <DialogDescription>{t("node.blurb")}</DialogDescription>
       </DialogHeader>
+      <ScrollArea className="h-full min-h-0">
+      <div className="pr-3">
 
       {canLock ? (
         <div className="flex flex-col gap-1.5">
@@ -403,6 +406,8 @@ function NodeDialogBody() {
         {lastCheck ? <CheckResult /> : null}
         <DeriveAddressBox />
       </form>
+      </div>
+      </ScrollArea>
     </DialogContent>
   );
 }
@@ -743,9 +748,9 @@ function CheckResult({ bare = false }: { bare?: boolean }) {
             ? t("node.check.csReceive")
             : t("node.check.csDiffer")}
       </p>
-      <p className="mt-1 max-h-24 overflow-y-auto">
+      <ScrollArea className="mt-1 max-h-24">
         <ClipText value={lastCheck.descriptor} className="text-2xs text-fg-muted" copy />
-      </p>
+      </ScrollArea>
       {lastCheck.addresses.length ? (
         <ul className="mt-2 space-y-0.5">
           {lastCheck.addresses.map((a, i) => (

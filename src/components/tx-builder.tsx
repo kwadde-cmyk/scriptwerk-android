@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { CopyButton } from "@/components/copy-button";
 import { QrPreview, QrScanner } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
@@ -270,7 +271,8 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
           {!coins.length ? (
             <p className="text-xs text-fg-muted">{t("tx.needScan")}</p>
           ) : (
-            <ul className="max-h-80 space-y-1 overflow-auto">
+            <ScrollArea className="max-h-80">
+            <ul className="space-y-1 pr-3">
               {coins.map((c) => {
                 const id = `${c.txid}:${c.vout}`;
                 const on = draft.includes(id);
@@ -307,6 +309,7 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
                 );
               })}
             </ul>
+            </ScrollArea>
           )}
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={confirmPick}>{t("tx.useCoins")}</Button>

@@ -32,6 +32,11 @@
 }
 
 @layer base {
+  /* Radix sizes the viewport to the content (`display: table`). That clips
+     dialogs that only have a max-height: the bar never appears. */
+  [data-radix-scroll-area-viewport] > div {
+    display: block !important;
+  }
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
