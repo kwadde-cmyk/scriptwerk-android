@@ -556,6 +556,66 @@ export function addedSignaturePubkeys(before: string, after: string): string[] {
   return inspectSignatures(after).inputs.flatMap((input) => input.pubkeys).filter((pk) => !prev.has(pk));
 }
 
+/** True when both strings are PSBTs of the same unsigned transaction. */
+export function samePsbtTransaction(a: string, b: string): boolean {
+  const left = psbtMaps(a);
+  const right = psbtMaps(b);
+  if (!left || !right) return false;
+  const ua = unsignedOf(left);
+  const ub = unsignedOf(right);
+  return Boolean(ua && ub && compareBytes(ua, ub) === 0);
+}
+
+/**
+ * Copy partial signatures from `extra` onto `base` when they spend the same
+ * unsigned transaction. A different transaction, or an empty base, replaces.
+ */
+export function mergePsbtSignatures(base: string, extra: string): string {
+  const next = extra.trim();
+  const prev = base.trim();
+  if (!next) return prev;
+  if (!prev || !samePsbtTransaction(prev, next)) return next;
+  const left = psbtMaps(prev);
+  const right = psbtMaps(next);
+  if (!left || !right) return next;
+  const count = Math.min(left.length, right.length);
+  for (let n = 1; n < count; n++) {
+    const dst = left[n];
+    const src = right[n];
+    if (!dst || !src) continue;
+    let touched = false;
+    for (const entry of src) {
+      if (entry.key.length < 2 || entry.key[0] !== 0x02) continue;
+      const hit = dst.findIndex((e) => compareBytes(e.key, entry.key) === 0);
+      if (hit >= 0) dst[hit] = { key: entry.key, value: entry.value };
+      else dst.push({ key: entry.key, value: entry.value });
+      touched = true;
+    }
+    if (touched) dst.sort((a, b) => compareBytes(a.key, b.key));
+  }
+  return bytesToBase64(encodePsbt(left));
+}
+
+function psbtMaps(text: string): { key: Uint8Array; value: Uint8Array }[][] | null {
+  const raw = text.trim().replace(/\s+/g, "");
+  if (!raw) return null;
+  const hexPsbt = /^[0-9a-fA-F]+$/.test(raw) && raw.toLowerCase().startsWith("70736274");
+  if (/^[0-9a-fA-F]+$/.test(raw) && !hexPsbt) return null;
+  let decoded: Uint8Array | null = null;
+  try {
+    decoded = hexPsbt ? hexToBytes(raw) : base64ToBytes(raw);
+  } catch {
+    return null;
+  }
+  if (!decoded || !isPsbt(decoded)) return null;
+  return parseMaps(decoded);
+}
+
+function unsignedOf(maps: { key: Uint8Array; value: Uint8Array }[][]): Uint8Array | null {
+  const value = (maps[0] ?? []).find((e) => e.key.length === 1 && e.key[0] === 0x00)?.value;
+  return value?.length ? value : null;
+}
+
 function pathOf(value: Uint8Array): { fingerprint: string; path: string } {
   if (value.length < 4 || (value.length - 4) % 4 !== 0) return { fingerprint: "", path: "" };
   const steps: string[] = [];

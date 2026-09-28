@@ -161,6 +161,7 @@ export function stageIndicesForAccount(
 }
 
 export interface StageSignerSlot {
+  id: string;
   index: number;
   delay: number;
   lock: StageLock;
@@ -190,6 +191,7 @@ export function describeStageSlots(stages: Stage[], reuse: boolean): StageSigner
     const nKeys = s.keys.length;
     const k = Math.min(Math.max(s.k, 1), Math.max(nKeys, 1));
     return {
+      id: s.id,
       index: i + 1,
       delay: s.delay,
       lock: s.delay > 0 && stageLockOf(s) === "after" ? "after" : "older",

@@ -1,12 +1,15 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { layoutTree } from "@/lib/miniscript/layout";
 import { visit, type MsNode } from "@/lib/miniscript/ast";
+import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
 import { lockWhen, tokenNeedsAction, type KeyEntry } from "@/lib/miniscript/keys";
-import { stageHighlightIds, stageLockOf } from "@/lib/miniscript/stages";
+import { describeStageSlots, stageHighlightIds, stageLockOf } from "@/lib/miniscript/stages";
+import { useBitcoind } from "@/store/bitcoind";
 import { useStudio } from "@/store/studio";
 import { PolicyNameHeading } from "@/components/policy-title";
 import { ZoomPane } from "@/components/zoom-pane";
-import { GitBranch } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { GitBranch, Lock, Unlock } from "lucide-react";
 import { useT } from "@/lib/use-t";
 
 function attentionIds(root: MsNode | null, keys: KeyEntry[], reuse: boolean): Set<string> {
@@ -39,6 +42,47 @@ export const PolicyGraph = memo(function PolicyGraph() {
     () => stageHighlightIds(root, stages, selectedStageId),
     [root, stages, selectedStageId],
   );
+  const slots = useMemo(() => describeStageSlots(stages, reuseKeys), [stages, reuseKeys]);
+  const unspents = useBitcoind((s) => s.lastWatch?.unspents);
+  const tip = useBitcoind((s) => (s.probe && s.probe.chain !== "demo" ? s.probe.blocks : 0)) ?? 0;
+  const [locks, setLocks] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("scriptwerk-graph-locks") === "1") setLocks(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const opens = useMemo(() => {
+    if (!slots.length) return [] as boolean[];
+    const live = (unspents ?? []).filter((c) => c.height > 0);
+    if (live.length) {
+      const chain = tip || Math.max(...live.map((c) => c.height));
+      const flags = slots.map(() => false);
+      for (const coin of live) {
+        const paths = evaluateCoinStatus({ height: coin.height, tip: chain, stages, reuse: reuseKeys, root }).paths;
+        paths.forEach((p, i) => {
+          if (p.open) flags[i] = true;
+        });
+      }
+      return flags;
+    }
+    if (tip > 0) return evaluateCoinStatus({ height: tip, tip, stages, reuse: reuseKeys, root }).paths.map((p) => p.open);
+    return slots.map((slot) => slot.lock !== "after" && slot.delay <= 0);
+  }, [slots, unspents, tip, stages, reuseKeys, root]);
+  const branchIds = useMemo(() => slots.map((slot) => stageHighlightIds(root, stages, slot.id)), [slots, root, stages]);
+  function toneOf(id: string): "open" | "locked" | null {
+    if (!locks) return null;
+    let open = false;
+    let locked = false;
+    branchIds.forEach((ids, i) => {
+      if (!ids.has(id)) return;
+      if (opens[i]) open = true;
+      else locked = true;
+    });
+    if (open === locked) return null;
+    return open ? "open" : "locked";
+  }
   const stageIndex = selectedStageId ? stages.findIndex((s) => s.id === selectedStageId) : -1;
   const activeStage = stageIndex >= 0 ? stages[stageIndex] : null;
   const selectedRect = useMemo(() => {
@@ -71,6 +115,29 @@ export const PolicyGraph = memo(function PolicyGraph() {
           contentWidth={Math.max(layout.width, 320)}
           contentHeight={Math.max(layout.height, 240)}
           selectedRect={selectedRect}
+          toolbar={
+            <Button
+              type="button"
+              variant={locks ? "default" : "outline"}
+              size="icon"
+              className="size-9"
+              aria-pressed={locks}
+              aria-label={t("graph.locks")}
+              onClick={() =>
+                setLocks((v) => {
+                  const next = !v;
+                  try {
+                    localStorage.setItem("scriptwerk-graph-locks", next ? "1" : "0");
+                  } catch {
+                    /* ignore */
+                  }
+                  return next;
+                })
+              }
+            >
+              {locks ? <Unlock /> : <Lock />}
+            </Button>
+          }
         >
           <svg
             width={Math.max(layout.width, 320)}
@@ -83,13 +150,22 @@ export const PolicyGraph = memo(function PolicyGraph() {
               const midY = (e.y1 + e.y2) / 2;
               const hot = highlight.size > 0;
               const on = !hot || (highlight.has(e.from) && highlight.has(e.to));
+              const edgeTone = toneOf(e.to);
+              const edgeStroke =
+                edgeTone === "open"
+                  ? "var(--color-ok)"
+                  : edgeTone === "locked"
+                    ? "var(--color-danger)"
+                    : on && hot
+                      ? "var(--color-primary)"
+                      : "var(--color-border-strong)";
               return (
                 <g key={`${e.from}-${e.to}`} opacity={on ? 1 : 0.22}>
                   <path
                     d={`M ${e.x1} ${e.y1} L ${e.x1} ${midY} L ${e.x2} ${midY} L ${e.x2} ${e.y2}`}
                     fill="none"
-                    stroke={on && hot ? "var(--color-primary)" : "var(--color-border-strong)"}
-                    strokeWidth={on && hot ? 1.75 : 1.25}
+                    stroke={edgeStroke}
+                    strokeWidth={edgeTone || (on && hot) ? 1.75 : 1.25}
                   />
                   {e.label ? (
                     <text
@@ -113,30 +189,40 @@ export const PolicyGraph = memo(function PolicyGraph() {
               const needs = attention.has(b.id);
               const hot = highlight.size > 0;
               const lit = highlight.has(b.id);
+              const tone = toneOf(b.id);
               const fill = b.hole
                 ? "transparent"
-                : lit
-                  ? "color-mix(in srgb, var(--color-primary) 38%, var(--color-elevated))"
-                  : selected
-                    ? "var(--color-primary)"
-                    : needs
-                      ? "color-mix(in srgb, var(--color-danger) 16%, var(--color-elevated))"
-                      : "var(--color-elevated)";
-              const stroke = lit
-                ? "var(--color-primary)"
-                : needs
-                  ? "var(--color-danger)"
-                  : b.hole
-                    ? "var(--color-fg-subtle)"
-                    : selected
+                : selected && !lit
+                  ? "var(--color-primary)"
+                  : tone === "open"
+                    ? "color-mix(in srgb, var(--color-ok) 42%, var(--color-elevated))"
+                    : tone === "locked"
+                      ? "color-mix(in srgb, var(--color-danger) 36%, var(--color-elevated))"
+                      : lit
+                        ? "color-mix(in srgb, var(--color-primary) 38%, var(--color-elevated))"
+                        : needs
+                          ? "color-mix(in srgb, var(--color-danger) 16%, var(--color-elevated))"
+                          : "var(--color-elevated)";
+              const stroke =
+                tone === "open"
+                  ? "var(--color-ok)"
+                  : tone === "locked"
+                    ? "var(--color-danger)"
+                    : lit
                       ? "var(--color-primary)"
-                      : timeish
-                        ? "var(--color-warn)"
-                        : "var(--color-border-strong)";
+                      : needs
+                        ? "var(--color-danger)"
+                        : b.hole
+                          ? "var(--color-fg-subtle)"
+                          : selected
+                            ? "var(--color-primary)"
+                            : timeish
+                              ? "var(--color-warn)"
+                              : "var(--color-border-strong)";
               const titleFill =
                 selected && !lit && !b.hole
                   ? "var(--color-primary-foreground)"
-                  : lit
+                  : tone || lit
                     ? "var(--color-fg)"
                     : needs
                       ? "var(--color-danger)"
@@ -144,11 +230,9 @@ export const PolicyGraph = memo(function PolicyGraph() {
               const subFill =
                 selected && !lit && !b.hole
                   ? "var(--color-primary-foreground)"
-                  : lit
-                    ? "var(--color-fg-muted)"
-                    : needs
-                      ? "var(--color-danger)"
-                      : "var(--color-fg-muted)";
+                  : needs && !tone
+                    ? "var(--color-danger)"
+                    : "var(--color-fg-muted)";
               return (
                 <g key={b.id} transform={`translate(${b.x} ${b.y})`} opacity={!hot || lit ? 1 : 0.22}>
                   <rect
@@ -157,7 +241,7 @@ export const PolicyGraph = memo(function PolicyGraph() {
                     rx={compact ? 6 : 10}
                     fill={fill}
                     stroke={stroke}
-                    strokeWidth={lit ? 2.4 : needs || selected ? 1.75 : 1}
+                    strokeWidth={tone ? 2 : lit ? 2.4 : needs || selected ? 1.75 : 1}
                     strokeDasharray={b.hole ? "4 3" : undefined}
                     onClick={() => select(b.id)}
                     style={{ cursor: "pointer" }}

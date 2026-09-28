@@ -1475,8 +1475,8 @@ describe("electrum helpers", () => {
   });
 
   it("parses electrum URLs and LAN hosts", () => {
-    assert.deepEqual(parseElectrumUrl("capable-dosage.local:50001"), {
-      host: "capable-dosage.local",
+    assert.deepEqual(parseElectrumUrl("fulcrum.local:50001"), {
+      host: "fulcrum.local",
       port: 50001,
       tls: false,
     });

@@ -23,8 +23,8 @@ describe("bitcoind rpc helpers", () => {
     assert.equal(normalizeRpcUrl("127.0.0.1"), "http://127.0.0.1:8332");
     assert.equal(normalizeRpcUrl("https://umbrel.local/"), "https://umbrel.local");
     assert.equal(
-      normalizeRpcUrl("LAN: https://capable-dosage.local:57521"),
-      "https://capable-dosage.local:57521",
+      normalizeRpcUrl("LAN: https://node.local:57521"),
+      "https://node.local:57521",
     );
     assert.equal(normalizeRpcUrl("<https://node.local:57521>"), "https://node.local:57521");
     assert.doesNotThrow(() => normalizeRpcUrl("ftp://example.local"));

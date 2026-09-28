@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Maximize2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/use-t";
@@ -16,11 +16,13 @@ export function ZoomPane({
   contentWidth,
   contentHeight,
   selectedRect,
+  toolbar,
   children,
 }: {
   contentWidth: number;
   contentHeight: number;
   selectedRect?: { x: number; y: number; w: number; h: number } | null;
+  toolbar?: ReactNode;
   children: React.ReactNode;
 }) {
   const { t } = useT();
@@ -241,6 +243,7 @@ export function ZoomPane({
         </div>
       </div>
       <div className="absolute right-3 bottom-3 z-10 flex gap-1">
+        {toolbar}
         <Button type="button" variant="outline" size="icon" className="size-9" onClick={fit} aria-label={t("graph.fit")}>
           <Maximize2 />
         </Button>
