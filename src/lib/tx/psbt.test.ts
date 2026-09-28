@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { btcToSats, buildPsbt, estimateVbytes, extractSignedTx, feeFromRate, inspectSignatures, planPayments, planSpend, satsToDecimal, sequenceAndLocktime, withPartialSigs } from "./psbt.ts";
+import { btcToSats, buildPsbt, estimateVbytes, extractSignedTx, feeFromRate, inspectSignatures, planPayments, planSpend, satsToDecimal, sequenceAndLocktime, withPartialSigs, addedSignaturePubkeys } from "./psbt.ts";
+import { signatureReport } from "./sigs.ts";
+import { createQrVideo } from "./qr-video.ts";
+import { emptyKey } from "../miniscript/keys.ts";
+import { deflateSync } from "node:zlib";
+import { UR, UREncoder } from "@ngraveio/bc-ur";
 
 const ADDR = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
 const TXID = "11".repeat(32);
@@ -200,5 +205,68 @@ describe("unsigned psbt", () => {
     assert.equal(again.getInputPartialSig(0, Buffer.from(pubB, "hex"))?.toString("hex"), "aa");
     const report = inspectSignatures(signed);
     assert.deepEqual(report.inputs[0]!.pubkeys, [pubB, pubA]);
+    assert.equal(report.inputs[0]!.derivations.find((d) => d.pubkey === pubA)?.fingerprint, "aaaaaaaa");
+    assert.equal(report.inputs[0]!.derivations.find((d) => d.pubkey === pubA)?.path, "m/48'/0'/0'/2'/0/0");
+    assert.deepEqual(addedSignaturePubkeys(psbt, signed), [pubB, pubA]);
+    assert.deepEqual(addedSignaturePubkeys(signed, signed), []);
+    const keys = [
+      { ...emptyKey("A"), fingerprint: "aaaaaaaa", note: "Ledger" },
+      { ...emptyKey("B"), fingerprint: "bbbbbbbb", note: "BitBox" },
+      { ...emptyKey("C"), fingerprint: "cccccccc", note: "Coldcard" },
+    ];
+    const onlyA = withPartialSigs(psbt, [{ input: 0, pubkey: Buffer.from(pubA, "hex"), signature: Buffer.from("bb", "hex") }]);
+    const status = signatureReport(onlyA, {
+      keys,
+      stages: [{ id: "s", delay: 0, k: 2, keys: ["A", "B", "C"] }],
+      reuse: false,
+      pathIndex: 0,
+    });
+    assert.deepEqual(status.inputs[0]!.present.map((p) => p.label), ["Ledger"]);
+    assert.equal(status.inputs[0]!.haveOnPath, 1);
+    assert.equal(status.inputs[0]!.need, 2);
+    assert.equal(status.inputs[0]!.pathReady, false);
+    assert.deepEqual(status.inputs[0]!.missing, ["BitBox", "Coldcard"]);
+  });
+});
+
+describe("qr video", () => {
+  it("joins a Specter QR video and a BBQr into one PSBT", async () => {
+    const specter = createQrVideo();
+    assert.equal((await specter.push("p2of2 dP8=")).payload, undefined);
+    const joined = await specter.push("p1of2 cHNi");
+    assert.equal(joined.payload, "cHNidP8=");
+    assert.equal(joined.got, 2);
+    assert.equal(joined.total, 2);
+
+    const bb = createQrVideo();
+    await bb.push("B$H$P$2/2$74ff");
+    const done = await bb.push("B$H$P$1/2$707362");
+    assert.equal(done.payload, "cHNidP8=");
+  });
+
+  it("inflates a zlib BBQr and reassembles a UR video", async () => {
+    const raw = Buffer.from("psbt\xffhi");
+    const z = deflateSync(raw);
+    let bits = "";
+    for (const byte of z) bits += byte.toString(2).padStart(8, "0");
+    while (bits.length % 5) bits += "0";
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let b32 = "";
+    for (let i = 0; i < bits.length; i += 5) b32 += alphabet[Number.parseInt(bits.slice(i, i + 5), 2)];
+    const video = createQrVideo();
+    const inflated = await video.push(`B$Z$P$1/1$${b32}`);
+    assert.equal(Buffer.from(inflated.payload ?? "", "base64").toString("utf8"), "psbt\xffhi");
+
+    const ur = UR.fromBuffer(raw);
+    const enc = new UREncoder(ur, 20);
+    const frames: string[] = [];
+    const collector = createQrVideo();
+    let result = "";
+    for (let i = 0; i < 40 && !result; i++) {
+      frames.push(enc.nextPart());
+      const step = await collector.push(frames[frames.length - 1]!);
+      result = step.payload ?? "";
+    }
+    assert.equal(Buffer.from(result, "base64").toString("utf8"), "psbt\xffhi");
   });
 });

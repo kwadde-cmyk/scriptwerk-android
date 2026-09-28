@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import jsQR from "jsqr";
+import { createQrVideo } from "@/lib/tx/qr-video";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Camera, FileUp, ImageUp } from "lucide-react";
@@ -80,19 +81,48 @@ export function QrPreview({ value, label, compact }: { value: string; label: str
   );
 }
 
-export function QrScanner({ onRead }: { onRead: (text: string) => void }) {
+export function QrScanner({ onRead, video = false }: { onRead: (text: string) => void; video?: boolean }) {
   const { t } = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const onReadRef = useRef(onRead);
+  onReadRef.current = onRead;
   const [camError, setCamError] = useState<string | null>(null);
   const [active, setActive] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   useEffect(() => {
     if (!active) return;
     let stream: MediaStream | null = null;
     let raf = 0;
     let stopped = false;
+    let busy = false;
+    const collector = video ? createQrVideo() : null;
+
+    function note(state: { got: number; total: number | null; payload?: string; error?: string }) {
+      if (state.payload) {
+        onReadRef.current(state.payload);
+        stopped = true;
+        setActive(false);
+        return;
+      }
+      if (state.got > 0) {
+        setCamError(null);
+        setProgress(state.total ? t("tx.qrVideo", { got: String(state.got), total: String(state.total) }) : t("tx.qrVideoOpen", { got: String(state.got) }));
+      }
+      if (state.error) setCamError(t(state.error));
+    }
+
+    async function take(text: string) {
+      if (!collector) {
+        onReadRef.current(text);
+        stopped = true;
+        setActive(false);
+        return;
+      }
+      note(await collector.push(text));
+    }
 
     async function start() {
       try {
@@ -100,35 +130,36 @@ export function QrScanner({ onRead }: { onRead: (text: string) => void }) {
           video: { facingMode: "environment" },
           audio: false,
         });
-        const video = videoRef.current;
-        if (!video) return;
-        video.srcObject = stream;
-        await video.play();
+        const videoEl = videoRef.current;
+        if (!videoEl) return;
+        videoEl.srcObject = stream;
+        await videoEl.play();
         const tick = () => {
           if (stopped) return;
           const canvas = canvasRef.current;
-          if (video && canvas && video.readyState >= 2) {
-            const max = 480;
-            const scale = Math.min(1, max / Math.max(video.videoWidth, video.videoHeight));
-            const w = Math.max(1, Math.floor(video.videoWidth * scale));
-            const h = Math.max(1, Math.floor(video.videoHeight * scale));
+          if (!busy && videoEl && canvas && videoEl.readyState >= 2) {
+            const max = 640;
+            const scale = Math.min(1, max / Math.max(videoEl.videoWidth, videoEl.videoHeight));
+            const w = Math.max(1, Math.floor(videoEl.videoWidth * scale));
+            const h = Math.max(1, Math.floor(videoEl.videoHeight * scale));
             if (canvas.width !== w) canvas.width = w;
             if (canvas.height !== h) canvas.height = h;
             const ctx = canvas.getContext("2d", { willReadFrequently: true });
             if (ctx && w && h) {
-              ctx.drawImage(video, 0, 0, w, h);
+              ctx.drawImage(videoEl, 0, 0, w, h);
               const img = ctx.getImageData(0, 0, w, h);
-              const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+              const code = jsQR(img.data, img.width, img.height, { inversionAttempts: video ? "attemptBoth" : "dontInvert" });
               if (code?.data) {
-                onRead(code.data);
-                stopped = true;
+                busy = true;
+                void take(code.data).finally(() => {
+                  busy = false;
+                  if (!stopped) raf = requestAnimationFrame(tick);
+                });
                 return;
               }
             }
           }
-          raf = window.setTimeout(() => {
-            raf = requestAnimationFrame(tick);
-          }, 80);
+          raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
       } catch {
@@ -140,11 +171,10 @@ export function QrScanner({ onRead }: { onRead: (text: string) => void }) {
     void start();
     return () => {
       stopped = true;
-      clearTimeout(raf);
       cancelAnimationFrame(raf);
       stream?.getTracks().forEach((tr) => tr.stop());
     };
-  }, [active, onRead, t]);
+  }, [active, t, video]);
 
   function onFile(file: File) {
     const url = URL.createObjectURL(file);
@@ -160,8 +190,18 @@ export function QrScanner({ onRead }: { onRead: (text: string) => void }) {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = jsQR(data.data, data.width, data.height);
       URL.revokeObjectURL(url);
-      if (code?.data) onRead(code.data);
-      else setCamError(t("qr.noCode"));
+      if (!code?.data) {
+        setCamError(t("qr.noCode"));
+        return;
+      }
+      if (!video) {
+        onReadRef.current(code.data);
+        return;
+      }
+      void createQrVideo().push(code.data).then((state) => {
+        if (state.payload) onReadRef.current(state.payload);
+        else setCamError(t(state.error ?? "tx.qrVideoNeed"));
+      });
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -183,9 +223,11 @@ export function QrScanner({ onRead }: { onRead: (text: string) => void }) {
         </div>
       ) : null}
       <canvas ref={canvasRef} className="hidden" />
+      {progress ? <p className="font-mono text-xs text-fg">{progress}</p> : null}
+      {video ? <p className="text-2xs text-pretty text-fg-muted">{t("tx.qrVideoHint")}</p> : null}
       {camError ? <p className="text-xs text-danger">{camError}</p> : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant={active ? "secondary" : "outline"} onClick={() => setActive((v) => !v)}>
+        <Button type="button" variant={active ? "secondary" : "outline"} onClick={() => { setCamError(null); setProgress(null); setActive((v) => !v); }}>
           <Camera />
           {active ? t("qr.camOff") : t("qr.cam")}
         </Button>

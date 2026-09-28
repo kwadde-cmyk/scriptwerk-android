@@ -512,13 +512,19 @@ function bytesToHex(data: Uint8Array): string {
   return [...data].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export type SigInput = { index: number; pubkeys: string[]; finalized: boolean };
+export type SigInput = {
+  index: number;
+  pubkeys: string[];
+  finalized: boolean;
+  derivations: { pubkey: string; fingerprint: string; path: string }[];
+};
 
 export function inspectSignatures(text: string): { inputs: SigInput[] } {
   const raw = text.trim().replace(/\s+/g, "");
   if (!raw) throw new Error("tx.err.empty");
-  if (/^[0-9a-fA-F]+$/.test(raw)) return { inputs: [] };
-  const decoded = base64ToBytes(raw);
+  const hexPsbt = /^[0-9a-fA-F]+$/.test(raw) && raw.toLowerCase().startsWith("70736274");
+  if (/^[0-9a-fA-F]+$/.test(raw) && !hexPsbt) return { inputs: [] };
+  const decoded = hexPsbt ? hexToBytes(raw) : base64ToBytes(raw);
   if (!decoded || !isPsbt(decoded)) throw new Error("tx.err.signed");
   const maps = parseMaps(decoded);
   const unsigned = (maps[0] ?? []).find((e) => e.key.length === 1 && e.key[0] === 0x00)?.value;
@@ -529,10 +535,36 @@ export function inspectSignatures(text: string): { inputs: SigInput[] } {
     const pubkeys = map
       .filter((e) => e.key.length > 1 && e.key[0] === 0x02)
       .map((e) => bytesToHex(e.key.slice(1)));
+    const derivations = map
+      .filter((e) => e.key.length > 1 && e.key[0] === 0x06)
+      .map((e) => ({ pubkey: bytesToHex(e.key.slice(1)), ...pathOf(e.value) }))
+      .filter((d) => d.fingerprint && d.path);
     const finalized = map.some((e) => e.key.length === 1 && (e.key[0] === 0x07 || e.key[0] === 0x08) && e.value.length > 0);
-    inputs.push({ index: n, pubkeys, finalized });
+    inputs.push({ index: n, pubkeys, finalized, derivations });
   }
   return { inputs };
+}
+
+/** Pubkeys that were not partial signatures in `before`. */
+export function addedSignaturePubkeys(before: string, after: string): string[] {
+  let prev = new Set<string>();
+  try {
+    prev = new Set(inspectSignatures(before).inputs.flatMap((input) => input.pubkeys));
+  } catch {
+    prev = new Set();
+  }
+  return inspectSignatures(after).inputs.flatMap((input) => input.pubkeys).filter((pk) => !prev.has(pk));
+}
+
+function pathOf(value: Uint8Array): { fingerprint: string; path: string } {
+  if (value.length < 4 || (value.length - 4) % 4 !== 0) return { fingerprint: "", path: "" };
+  const steps: string[] = [];
+  for (let i = 4; i < value.length; i += 4) {
+    const n = new DataView(value.buffer, value.byteOffset + i, 4).getUint32(0, true);
+    const hard = n >= 0x80000000;
+    steps.push(hard ? `${n - 0x80000000}'` : String(n));
+  }
+  return { fingerprint: bytesToHex(value.slice(0, 4)), path: `m/${steps.join("/")}` };
 }
 
 export function withPartialSigs(

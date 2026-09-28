@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { QrCode, Trash2 } from "lucide-react";
-import { addressFromScan, btcToSats, buildPsbt, estimateVbytes, expandSpots, extractSignedTx, feeFromRate, inspectSignatures, planPayments, satsFromDecimal, satsToDecimal, type ScriptSpot } from "@/lib/tx/psbt";
+import { addressFromScan, addedSignaturePubkeys, btcToSats, buildPsbt, estimateVbytes, expandSpots, extractSignedTx, feeFromRate, planPayments, satsFromDecimal, satsToDecimal, type ScriptSpot } from "@/lib/tx/psbt";
+import { signatureReport } from "@/lib/tx/sigs";
 import { formatAmount, type UtxoHit, type WatchAddr } from "@/lib/hw/address-check";
 import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
 import { describeStageSlots, type Stage } from "@/lib/miniscript/stages";
@@ -18,8 +19,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CopyButton } from "@/components/copy-button";
 import { QrPreview, QrScanner } from "@/components/qr-io";
+import { toast } from "sonner";
 import { useT } from "@/lib/use-t";
-import { localizeMessage, numberLocale } from "@/lib/i18n";
+import { localizeMessage, numberLocale, t as translate } from "@/lib/i18n";
 import type { HwKind } from "@/lib/hw";
 
 const NO_COINS: UtxoHit[] = [];
@@ -39,7 +41,6 @@ export function TxTab() {
   const [mode, setMode] = useState<"send" | "recovery">("send");
   const [path, setPath] = useState<number | null>(null);
   const pathIndex = slots.length <= 1 ? 0 : path;
-  const need = pathIndex == null ? 1 : spendSize(stages, reuse, pathIndex).sigs;
   return (
     <div className="space-y-5">
       {slots.length > 1 ? (
@@ -64,7 +65,7 @@ export function TxTab() {
         </Button>
       </div>
       {mode === "send" ? <SendPane pathIndex={pathIndex} /> : <RecoveryPane pathIndex={pathIndex} />}
-      <BroadcastPane required={need} />
+      <BroadcastPane pathIndex={pathIndex} />
     </div>
   );
 }
@@ -252,13 +253,14 @@ function SendPane({ pathIndex }: { pathIndex: number | null }) {
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" disabled={!psbt} onClick={() => downloadPsbt(psbt, "scriptwerk-send.psbt")}>{t("tx.exportFile")}</Button>
         <Button type="button" variant="outline" disabled={!psbt} onClick={() => setShowQr((v) => !v)}>{t("tx.exportQr")}</Button>
-        <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "ledger", setBusy, setPsbt, setError, locale)}>
+        <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "ledger", setBusy, setPsbt, setError, locale).then((next) => next && noteSigned(next, pathIndex))}>
           {busy === "ledger" ? t("tx.signing") : t("tx.ledger")}
         </Button>
-        <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "bitbox", setBusy, setPsbt, setError, locale)}>
+        <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "bitbox", setBusy, setPsbt, setError, locale).then((next) => next && noteSigned(next, pathIndex))}>
           {busy === "bitbox" ? t("tx.signing") : t("tx.bitbox")}
         </Button>
       </div>
+      {psbt ? <SigStatus psbt={psbt} pathIndex={pathIndex} /> : null}
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
       {dustWarn && !dustChange ? <p className="text-xs text-pretty text-warn">{t("tx.dustChange", { sats: String(changeLeft) })}</p> : null}
       {showQr && psbt ? <QrPreview value={psbt} label={t("tx.exportQr")} compact /> : null}
@@ -425,13 +427,14 @@ function RecoveryPane({ pathIndex }: { pathIndex: number | null }) {
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {psbt ? <PsbtExport value={psbt} name={`scriptwerk-${id.replace(":", "-")}.psbt`} /> : <span className="text-2xs text-fg-muted">{t("tx.buildEach")}</span>}
-                <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "ledger", setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt: next } : b))), setError, locale)}>
+                <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "ledger", setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt: next } : b))), setError, locale).then((next) => next && noteSigned(next, pathIndex))}>
                   {t("tx.ledger")}
                 </Button>
-                <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "bitbox", setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt: next } : b))), setError, locale)}>
+                <Button type="button" variant="outline" disabled={!psbt || !!busy} onClick={() => void sign(psbt, "bitbox", setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt: next } : b))), setError, locale).then((next) => next && noteSigned(next, pathIndex))}>
                   {t("tx.bitbox")}
                 </Button>
               </div>
+              {psbt ? <SigStatus psbt={psbt} pathIndex={pathIndex} /> : null}
             </li>
           );
         })}
@@ -442,7 +445,7 @@ function RecoveryPane({ pathIndex }: { pathIndex: number | null }) {
   );
 }
 
-function BroadcastPane({ required }: { required: number }) {
+function BroadcastPane({ pathIndex }: { pathIndex: number | null }) {
   const { t, locale } = useT();
   const status = useBitcoind((s) => s.status);
   const demo = useBitcoind((s) => s.demo);
@@ -452,14 +455,6 @@ function BroadcastPane({ required }: { required: number }) {
   const [txid, setTxid] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const report = useMemo(() => {
-    if (!signed.trim()) return null;
-    try {
-      return inspectSignatures(signed);
-    } catch {
-      return null;
-    }
-  }, [signed]);
 
   async function send() {
     setError(null);
@@ -481,25 +476,7 @@ function BroadcastPane({ required }: { required: number }) {
     <section className="space-y-2 border-t border-border pt-4">
       <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("tx.signed")}</h2>
       <p className="text-2xs text-pretty text-fg-muted">{t("tx.signedBlurb")}</p>
-      {report ? (
-        <ul className="space-y-1">
-          {report.inputs.length === 0 ? <li className="text-xs text-fg-muted">{t("tx.sigRaw")}</li> : null}
-          {report.inputs.map((input) => {
-            const miss = Math.max(0, required - input.pubkeys.length);
-            return (
-              <li key={input.index} className="text-xs text-pretty text-fg-muted">
-                {input.finalized
-                  ? t("tx.sigFinal", { n: String(input.index) })
-                  : t("tx.sigHave", { n: String(input.index), have: String(input.pubkeys.length), need: String(required) })}
-                {!input.finalized && miss > 0 ? ` ${t("tx.sigMiss", { n: String(miss) })}` : ""}
-                {input.pubkeys.length ? (
-                  <span className="mt-0.5 block font-mono text-2xs">{input.pubkeys.map((pk) => `${pk.slice(0, 12)}…`).join(" · ")}</span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
+      {signed.trim() ? <SigStatus psbt={signed} pathIndex={pathIndex} /> : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>{t("tx.file")}</Button>
         <input
@@ -522,9 +499,10 @@ function BroadcastPane({ required }: { required: number }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("tx.scan")}</DialogTitle>
-            <DialogDescription>{t("tx.signed")}</DialogDescription>
+            <DialogDescription>{t("tx.qrVideoHint")}</DialogDescription>
           </DialogHeader>
           <QrScanner
+            video
             onRead={(text) => {
               setSigned(text.trim());
               setImportQr(false);
@@ -737,10 +715,73 @@ async function sign(
     if (!session || session.demo) throw new Error("tx.err.demoSign");
     const hmac = await useHardware.getState().registerPolicy(compiled.policy);
     const signed = await session.signPsbt({ psbt, policy: compiled.policy, hmac });
+    if (!addedSignaturePubkeys(psbt, signed).length) throw new Error("tx.err.noSig");
     setPsbt(signed);
+    return signed;
   } catch (e) {
     setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.err.sign"));
+    return null;
   } finally {
     setBusy(null);
   }
+}
+
+function noteSigned(psbt: string, pathIndex: number | null) {
+  const studio = useStudio.getState();
+  const locale = studio.locale === "en" ? "en" : "de";
+  try {
+    const report = signatureReport(psbt, {
+      keys: studio.keys,
+      stages: studio.stages,
+      reuse: studio.reuseKeys,
+      pathIndex,
+    });
+    const names = [...new Set(report.inputs.flatMap((input) => input.present.map((p) => p.label)))];
+    toast.success(names.length ? translate(locale, "tx.signedOk", { name: names.join(", ") }) : translate(locale, "tx.signedOkBare"));
+  } catch {
+    toast.success(translate(locale, "tx.signedOkBare"));
+  }
+}
+
+function SigStatus({ psbt, pathIndex }: { psbt: string; pathIndex: number | null }) {
+  const { t, locale } = useT();
+  const keys = useStudio((s) => s.keys);
+  const stages = useStudio((s) => s.stages);
+  const reuse = useStudio((s) => s.reuseKeys);
+  const report = useMemo(() => {
+    try {
+      return signatureReport(psbt, { keys, stages, reuse, pathIndex });
+    } catch {
+      return null;
+    }
+  }, [psbt, keys, stages, reuse, pathIndex]);
+  if (!report || !report.inputs.length) return <p className="text-xs text-fg-muted">{t("tx.sigRaw")}</p>;
+  const slot = pathIndex == null ? null : describeStageSlots(stages, reuse)[pathIndex];
+  const path = slot ? `${slot.quorum} · ${lockWhen(slot.lock, slot.delay, locale)}` : "";
+  return (
+    <ul className="space-y-1">
+      {report.inputs.map((input) => (
+        <li key={input.index} className="text-xs text-pretty text-fg">
+          {input.present.length
+            ? t("tx.sigPresent", { names: input.present.map((p) => p.label).join(", ") })
+            : input.finalized
+              ? t("tx.sigFinal", { n: String(input.index) })
+              : t("tx.sigNone")}
+          {pathIndex == null ? (
+            <span className="mt-0.5 block text-fg-muted">{t("tx.sigPathNeed")}</span>
+          ) : input.pathReady ? (
+            <span className="mt-0.5 block text-ok">{t("tx.sigPathDone", { path })}</span>
+          ) : (
+            <span className="mt-0.5 block text-fg-muted">
+              {t("tx.sigMissKeys", {
+                path,
+                n: String(Math.max(0, input.need - input.haveOnPath)),
+                who: input.missing.join(", ") || "—",
+              })}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
