@@ -197,15 +197,53 @@ async function deriveDescriptorAddresses(desc: string, from: number, to: number)
 }
 
 export async function nativeElectrumDeriveLookup(
-  groups: { desc: string; from: number; to: number }[],
+  groups: { desc: string; from: number; to: number; addresses?: string[] }[],
   server: string,
-): Promise<UtxoScanResult & { groups: string[][] }> {
+): Promise<UtxoScanResult & { groups: string[][]; used: boolean[][]; more: boolean }> {
   const lists: string[][] = [];
-  for (const g of groups) lists.push(await deriveDescriptorAddresses(g.desc, g.from, g.to));
-  const addresses = lists.flat();
-  if (!addresses.length) throw new Error("hw.utxo.none");
-  const scanned = await nativeElectrumLookup(addresses, server);
-  return { ...scanned, groups: lists };
+  for (const g of groups) {
+    if (g.addresses && g.addresses.length > 0) lists.push(g.addresses.map(String));
+    else lists.push(await deriveDescriptorAddresses(g.desc, g.from, g.to));
+  }
+  const flat = lists.flat().slice(0, 200);
+  if (!flat.length) throw new Error("hw.utxo.derive");
+  const scanned = await nativeElectrumScanOrdered(flat, server);
+  let off = 0;
+  const used = lists.map((list) => {
+    const slice = scanned.used.slice(off, off + list.length);
+    off += list.length;
+    return slice;
+  });
+  return {
+    height: scanned.height,
+    total: scanned.total,
+    unspents: scanned.unspents,
+    groups: lists,
+    used,
+    more: used.some((list) => list.some(Boolean)) || scanned.unspents.length > 0,
+  };
+}
+
+async function nativeElectrumScanOrdered(addresses: string[], server: string): Promise<UtxoScanResult & { used: boolean[] }> {
+  const target = assertNativeTarget(server);
+  const hashes: { address: string; scripthash: string }[] = [];
+  for (const address of addresses) hashes.push({ address, scripthash: await scripthashForAddress(address) });
+  const rows = await nativeElectrumRpc(
+    target,
+    [
+      { method: "blockchain.headers.subscribe", params: [] },
+      ...hashes.map((h) => ({ method: "blockchain.scripthash.listunspent", params: [h.scripthash] })),
+      ...hashes.map((h) => ({ method: "blockchain.scripthash.get_history", params: [h.scripthash] })),
+    ],
+    20000,
+  );
+  const scanned = mapElectrumUnspents(hashes, rows);
+  const used = hashes.map((_, i) => {
+    const list = rows[i + 1];
+    const hist = rows[1 + hashes.length + i];
+    return (Array.isArray(list) && list.length > 0) || (Array.isArray(hist) && hist.length > 0);
+  });
+  return { ...scanned, used };
 }
 
 export async function nativeElectrumLookup(addresses: string[], server: string): Promise<UtxoScanResult> {

@@ -15,13 +15,9 @@ import { toast } from "sonner";
 export function UtxoScanPanel({
   enabled,
   hint,
-  receive = true,
-  change = true,
 }: {
   enabled: boolean;
   hint: string;
-  receive?: boolean;
-  change?: boolean;
 }) {
   const { t, locale } = useT();
   const fieldId = useId();
@@ -46,22 +42,27 @@ export function UtxoScanPanel({
       ? { url: node.url, username: node.username, password: node.password }
       : { url: "", username: "", password: "" };
     try {
-      let from = 0;
       let merged: UtxoScanResult = { height: 0, total: 0, unspents: [] };
-      while (from < UTXO_SCAN_CAP) {
-        const next = await scanDescriptorUtxos(cfg, compiled.descriptor, {
-          count: n,
-          receive,
-          change,
-          electrum: node.electrum,
-          from,
-        });
-        merged = mergeUtxoResults(merged, next);
-        from += n;
-        merged.scanned = Math.min(from, UTXO_SCAN_CAP);
-        setScanned(merged.scanned);
-        setResult(merged);
-        if (!next.unspents.length) break;
+      for (const chain of [
+        { receive: true, change: false },
+        { receive: false, change: true },
+      ]) {
+        let from = 0;
+        while (from < UTXO_SCAN_CAP) {
+          const next = await scanDescriptorUtxos(cfg, compiled.descriptor, {
+            count: n,
+            receive: chain.receive,
+            change: chain.change,
+            electrum: node.electrum,
+            from,
+          });
+          merged = mergeUtxoResults(merged, next);
+          from += n;
+          merged.scanned = Math.min(Math.max(merged.scanned ?? 0, from), UTXO_SCAN_CAP);
+          setScanned(merged.scanned);
+          setResult({ ...merged });
+          if (!next.more) break;
+        }
       }
       useBitcoind.getState().setLastUtxo({
         height: merged.height,

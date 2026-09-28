@@ -78,7 +78,9 @@ export function hwErrorMessage(err: unknown): string {
   if (/0x6a82|FILE_NOT_FOUND/i.test(msg) || e.statusCode === 0x6a82) return "hw.err.6a82";
   if (/0x6a80|INCORRECT_DATA|Invalid data received/i.test(msg) || e.statusCode === 0x6a80) return "hw.err.6a80";
   if (/locked|pin/i.test(msg)) return "hw.err.locked";
-  if (/Bitcoin|wrong app|ins not supported|0x6d00/i.test(msg)) return "hw.err.app";
-  if (/HID|WebHID|unsupported/i.test(msg)) return "hw.err.hid";
+  if (/Please update your Ledger Bitcoin app/i.test(msg)) return "hw.err.appUpdate";
+  if (/InvalidState|already open|failed to open|busy/i.test(msg) || e.name === "InvalidStateError") return "hw.err.busy";
+  if (/wrong app|ins not supported|0x6d00/i.test(msg) || e.statusCode === 0x6d00) return "hw.err.app";
+  if (/HIDNotSupported|navigator\.hid|WebHID/i.test(msg)) return "hw.err.hid";
   return msg || "hw.err.generic";
 }

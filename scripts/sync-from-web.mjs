@@ -128,20 +128,22 @@ function classifyFetchError(err: unknown): Error {
     out,
     "nativeElectrumDeriveLookup",
     `async function electrumLookup(
-  groups: { desc: string; from: number; to: number }[],
+  groups: { desc: string; from: number; to: number; addresses?: string[] }[],
   server: string,
-): Promise<UtxoScanResult & { groups: string[][] }> {
+): Promise<UtxoScanResult & { groups: string[][]; used: boolean[][]; more: boolean }> {
+  const ready = groups.every((g) => g.addresses && g.addresses.length > 0);
   const res = await fetch("/electrum", {`,
     `async function electrumLookup(
-  groups: { desc: string; from: number; to: number }[],
+  groups: { desc: string; from: number; to: number; addresses?: string[] }[],
   server: string,
-): Promise<UtxoScanResult & { groups: string[][] }> {
+): Promise<UtxoScanResult & { groups: string[][]; used: boolean[][]; more: boolean }> {
   if (!server.trim()) throw new Error("hw.utxo.needElectrum");
   const { nativeRpcAvailable } = await import("./native-http.ts");
   if (nativeRpcAvailable()) {
     const { nativeElectrumDeriveLookup } = await import("./native-electrum.ts");
     return nativeElectrumDeriveLookup(groups, server);
   }
+  const ready = groups.every((g) => g.addresses && g.addresses.length > 0);
   const res = await fetch("/electrum", {`,
   );
 

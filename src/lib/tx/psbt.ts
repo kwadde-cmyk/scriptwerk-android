@@ -4,6 +4,23 @@ const DUST_SATS = 546;
 const RBF_SEQUENCE = 0xfffffffd;
 const FINAL_SEQUENCE = 0xffffffff;
 
+/** nSequence and nLockTime a signer needs in order to see the chosen miniscript branch. */
+export function sequenceAndLocktime(opts: {
+  older?: number;
+  after?: number;
+  tip?: number;
+  rbf?: boolean;
+}): { sequence: number; locktime: number } {
+  const older = Math.max(0, Math.floor(Number(opts.older) || 0));
+  const after = Math.max(0, Math.floor(Number(opts.after) || 0));
+  const tip = Math.max(0, Math.floor(Number(opts.tip) || 0));
+  const sequence =
+    older > 0 ? Math.min(older, 0xffff) : opts.rbf === false ? FINAL_SEQUENCE : RBF_SEQUENCE;
+  if (sequence === FINAL_SEQUENCE) return { sequence, locktime: 0 };
+  const locktime = after > 0 ? Math.max(after, tip) : tip;
+  return { sequence, locktime };
+}
+
 export type SpendCoin = {
   txid: string;
   vout: number;
@@ -17,6 +34,8 @@ export type SpendPlan = {
   feeSats: number;
   inputSats: number;
   rbf: boolean;
+  sequence: number;
+  locktime: number;
   dustChange?: boolean;
 };
 
@@ -77,6 +96,9 @@ export function planSpend(opts: {
   changeAddress?: string;
   sendAll?: boolean;
   rbf?: boolean;
+  older?: number;
+  after?: number;
+  tip?: number;
 }): SpendPlan {
   const inputs = opts.coins.filter((c) => c.txid && c.address && c.amountBtc > 0);
   if (!inputs.length) throw new Error("tx.needCoins");
@@ -106,7 +128,7 @@ export function planSpend(opts: {
     scriptPubKeyFromAddress(change);
     outputs.push({ address: change, sats: changeSats });
   }
-  return { inputs, outputs, feeSats: fee, inputSats, rbf: opts.rbf !== false, dustChange };
+  return finishPlan({ inputs, outputs, feeSats: fee, inputSats, rbf: opts.rbf !== false, dustChange }, opts);
 }
 
 export function planPayments(opts: {
@@ -115,6 +137,9 @@ export function planPayments(opts: {
   feeSats: number;
   changeAddress?: string;
   rbf?: boolean;
+  older?: number;
+  after?: number;
+  tip?: number;
 }): SpendPlan {
   const inputs = opts.coins.filter((c) => c.txid && c.address && c.amountBtc > 0);
   if (!inputs.length) throw new Error("tx.needCoins");
@@ -142,7 +167,15 @@ export function planPayments(opts: {
     scriptPubKeyFromAddress(change);
     outputs.push({ address: change, sats: changeSats });
   }
-  return { inputs, outputs, feeSats: fee, inputSats, rbf: opts.rbf !== false, dustChange };
+  return finishPlan({ inputs, outputs, feeSats: fee, inputSats, rbf: opts.rbf !== false, dustChange }, opts);
+}
+
+function finishPlan(
+  plan: Omit<SpendPlan, "sequence" | "locktime">,
+  opts: { older?: number; after?: number; tip?: number; rbf?: boolean },
+): SpendPlan {
+  const locks = sequenceAndLocktime(opts);
+  return { ...plan, sequence: locks.sequence, locktime: locks.locktime, rbf: locks.sequence !== FINAL_SEQUENCE };
 }
 
 export function addressFromScan(text: string): string {
@@ -152,26 +185,102 @@ export function addressFromScan(text: string): string {
   return body;
 }
 
-export function buildPsbt(plan: SpendPlan): string {
+export type KeyDerivation = { pubkey: string; fingerprint: string; path: string };
+
+export type ScriptSpot = {
+  address: string;
+  witnessScript: string;
+  derivations: KeyDerivation[];
+};
+
+export function buildPsbt(plan: SpendPlan, meta?: { inputs?: ScriptSpot[]; outputs?: (ScriptSpot | null)[] }): string {
   const tx = unsignedTx(plan);
   const parts: Uint8Array[] = [bytes("psbt"), Uint8Array.of(0xff)];
-  parts.push(mapEntry(Uint8Array.of(0x00), tx));
-  parts.push(Uint8Array.of(0x00));
-  for (const coin of plan.inputs) {
+  parts.push(mapOf([{ key: Uint8Array.of(0x00), value: tx }]));
+  plan.inputs.forEach((coin, i) => {
     const script = hexToBytes(scriptPubKeyFromAddress(coin.address));
     const value = new Uint8Array(8 + 1 + script.length);
     writeU64(value, 0, btcToSats(coin.amountBtc));
     value[8] = script.length;
     value.set(script, 9);
-    parts.push(mapEntry(Uint8Array.of(0x01), value));
-    parts.push(Uint8Array.of(0x00));
-  }
-  for (let i = 0; i < plan.outputs.length; i++) parts.push(Uint8Array.of(0x00));
+    const entries: { key: Uint8Array; value: Uint8Array }[] = [{ key: Uint8Array.of(0x01), value }];
+    const spot = meta?.inputs?.[i];
+    if (spot?.witnessScript) entries.push({ key: Uint8Array.of(0x05), value: hexToBytes(spot.witnessScript) });
+    for (const deriv of spot?.derivations ?? []) entries.push(derivationEntry(0x06, deriv));
+    parts.push(mapOf(entries));
+  });
+  plan.outputs.forEach((_, i) => {
+    const spot = meta?.outputs?.[i];
+    const entries: { key: Uint8Array; value: Uint8Array }[] = [];
+    for (const deriv of spot?.derivations ?? []) entries.push(derivationEntry(0x02, deriv));
+    parts.push(mapOf(entries));
+  });
   return bytesToBase64(concat(parts));
 }
 
+export async function expandSpots(
+  descriptor: string,
+  spots: { change: number; index: number }[],
+): Promise<ScriptSpot[]> {
+  const res = await fetch("/electrum", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ expand: true, descriptor, spots }),
+  });
+  const body = (await res.json().catch(() => null)) as {
+    result?: { items?: ScriptSpot[] };
+    error?: { message?: string };
+  } | null;
+  if (!body) throw new Error("tx.err.script");
+  if (body.error?.message) throw new Error(body.error.message);
+  if (res.status >= 400 || !Array.isArray(body.result?.items)) throw new Error("tx.err.script");
+  return body.result.items;
+}
+
+function derivationEntry(scope: number, deriv: KeyDerivation): { key: Uint8Array; value: Uint8Array } {
+  const pub = hexToBytes(deriv.pubkey);
+  if (pub.length !== 33) throw new Error("tx.err.script");
+  const key = new Uint8Array(1 + pub.length);
+  key[0] = scope;
+  key.set(pub, 1);
+  const idxs = pathIndexes(deriv.path);
+  const fp = hexToBytes(deriv.fingerprint.replace(/^0x/i, "").padStart(8, "0").slice(0, 8));
+  if (fp.length !== 4) throw new Error("tx.err.script");
+  const value = new Uint8Array(4 + idxs.length * 4);
+  value.set(fp, 0);
+  idxs.forEach((n, i) => {
+    const part = u32(n);
+    value.set(part, 4 + i * 4);
+  });
+  return { key, value };
+}
+
+function pathIndexes(path: string): number[] {
+  const body = path.trim().replace(/^m\/?/, "");
+  if (!body) throw new Error("tx.err.script");
+  return body.split("/").filter(Boolean).map((step) => {
+    const hardened = step.endsWith("'") || step.toLowerCase().endsWith("h");
+    const n = Number.parseInt(step, 10);
+    if (!Number.isFinite(n) || n < 0 || n > 0x7fffffff) throw new Error("tx.err.script");
+    return (hardened ? 0x80000000 : 0) + n;
+  });
+}
+
+function mapOf(entries: { key: Uint8Array; value: Uint8Array }[]): Uint8Array {
+  const sorted = entries.slice().sort((a, b) => compareBytes(a.key, b.key));
+  return concat([...sorted.map((e) => mapEntry(e.key, e.value)), Uint8Array.of(0x00)]);
+}
+
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i]! < b[i]! ? -1 : 1;
+  if (a.length === b.length) return 0;
+  return a.length < b.length ? -1 : 1;
+}
+
 function unsignedTx(plan: SpendPlan): Uint8Array {
-  const seq = plan.rbf ? RBF_SEQUENCE : FINAL_SEQUENCE;
+  const seq = plan.sequence;
   const body: Uint8Array[] = [];
   body.push(u32(2));
   body.push(compact(plan.inputs.length));
@@ -190,7 +299,7 @@ function unsignedTx(plan: SpendPlan): Uint8Array {
     body.push(compact(script.length));
     body.push(script);
   }
-  body.push(u32(0));
+  body.push(u32(plan.locktime));
   return concat(body);
 }
 
@@ -440,6 +549,10 @@ export function withPartialSigs(
     key[0] = 0x02;
     key.set(sig.pubkey, 1);
     map.push({ key, value: sig.signature });
+  }
+  for (let n = 1; n < maps.length; n++) {
+    const map = maps[n];
+    if (map) map.sort((a, b) => compareBytes(a.key, b.key));
   }
   return bytesToBase64(encodePsbt(maps));
 }

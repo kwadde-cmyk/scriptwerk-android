@@ -18,13 +18,68 @@ function isFileNotFound(err: unknown): boolean {
   return /0x6a82|FILE_NOT_FOUND/i.test(msg) || code === 0x6a82;
 }
 
+type HidDevice = {
+  vendorId: number;
+  opened?: boolean;
+  open: () => Promise<void>;
+  close: () => Promise<void>;
+};
+
+type LedgerTransport = {
+  device: HidDevice;
+  close: () => Promise<void>;
+  send: (...args: unknown[]) => Promise<{ toString: (enc: string) => string; length: number }>;
+};
+
+type TransportCtor = {
+  open: (device: HidDevice) => Promise<LedgerTransport>;
+};
+
+const LEDGER_VENDOR = 0x2c97;
+
+function hidApi(): { getDevices: () => Promise<HidDevice[]>; requestDevice: (opts: unknown) => Promise<HidDevice | HidDevice[]> } {
+  const hid = (navigator as Navigator & { hid?: { getDevices: () => Promise<HidDevice[]>; requestDevice: (opts: unknown) => Promise<HidDevice | HidDevice[]> } }).hid;
+  if (!hid) throw new Error("hw.err.hid");
+  return hid;
+}
+
+/** User-gesture request, then reopen a device another tab left claimed. create() times out on that case. */
+async function openTransport(TransportWebHID: TransportCtor) {
+  const hid = hidApi();
+  let granted: HidDevice[] = [];
+  try {
+    granted = (await hid.getDevices()).filter((d) => d.vendorId === LEDGER_VENDOR);
+  } catch {
+    granted = [];
+  }
+  const picked = granted.length
+    ? granted[0]!
+    : await (async () => {
+        const requested = await hid.requestDevice({ filters: [{ vendorId: LEDGER_VENDOR }] });
+        const list = Array.isArray(requested) ? requested : [requested];
+        if (!list[0]) throw new Error("hw.err.none");
+        return list[0];
+      })();
+
+  const claim = async () => TransportWebHID.open(picked);
+  try {
+    if (picked.opened) await picked.close();
+    return await claim();
+  } catch (err) {
+    const msg = String((err as { message?: string })?.message || err);
+    if (!/InvalidState|already open|failed to open/i.test(msg)) throw err;
+    await picked.close().catch(() => undefined);
+    return claim();
+  }
+}
+
 export async function openLedgerSession(): Promise<HwSession> {
   await ensureBuffer();
   await installNativeUsbPolyfill();
   const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");
   const { AppClient, WalletPolicy } = await import("ledger-bitcoin");
-  const transport = await TransportWebHID.create();
-  const app = new AppClient(transport);
+  const transport = await openTransport(TransportWebHID as unknown as TransportCtor);
+  const app = new AppClient(transport as never);
   let info: { name: string; version: string } | null = null;
   try {
     info = await app.getAppAndVersion();

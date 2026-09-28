@@ -551,8 +551,6 @@ function AddressCheckPanel({
       <UtxoScanPanel
         enabled={Boolean(electrum.trim()) && !nodeDemo && !disabled && !working}
         hint={electrum.trim() ? t("hw.utxo.blurb") : t("hw.utxo.needElectrum")}
-        receive={receive}
-        change={change}
       />
     </div>
   );

@@ -8,6 +8,7 @@ import { KeyBoard, KeyReuseControls } from "@/components/key-board";
 import { PolicyGraph } from "@/components/policy-graph";
 import { StageBuilder, ExpertPolicySettings } from "@/components/stage-builder";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { defaultStages } from "@/lib/miniscript/stages";
 import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
@@ -455,12 +456,12 @@ function ExpertPanel({ pinInspector = false }: { pinInspector?: boolean }) {
   if (pinInspector) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <ScrollArea className="min-h-0 flex-1">
           {settings}
           <div className="border-t border-border">
             <OperatorPalette embedded />
           </div>
-        </div>
+        </ScrollArea>
         <div className="shrink-0 border-t border-border">
           <NodeInspector />
         </div>
@@ -470,7 +471,7 @@ function ExpertPanel({ pinInspector = false }: { pinInspector?: boolean }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <ScrollArea className="min-h-0 flex-1">
         {settings}
         <div className="border-t border-border">
           <OperatorPalette embedded />
@@ -478,7 +479,7 @@ function ExpertPanel({ pinInspector = false }: { pinInspector?: boolean }) {
         <div className="border-t border-border">
           <NodeInspector />
         </div>
-      </div>
+      </ScrollArea>
     </div>
   );
 }

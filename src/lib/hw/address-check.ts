@@ -145,6 +145,7 @@ export interface UtxoScanResult {
   unspents: UtxoHit[];
   scanned?: number;
   coreMatch?: boolean;
+  more?: boolean;
 }
 
 export function mergeUtxoResults(a: UtxoScanResult, b: UtxoScanResult): UtxoScanResult {
@@ -280,6 +281,7 @@ export interface WatchSnapshot {
   coreMatch?: boolean;
   addresses: WatchAddr[];
   unspents: UtxoHit[];
+  more?: boolean;
 }
 
 export function buildWatchSnapshot(opts: {

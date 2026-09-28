@@ -327,23 +327,28 @@ export const useBitcoind = create<BitcoindState>()(
             status === "ready" && url.trim()
               ? { url: normalizeRpcUrl(url), username, password }
               : { url: "", username: "", password: "" };
-          let from = 0;
           let merged: WatchSnapshot | null = null;
-          while (from < UTXO_SCAN_CAP) {
-            const next = await scanWatchWallet(cfg, descriptor, {
-              count: n,
-              receive: true,
-              change: true,
-              electrum,
-              from,
-              checksum,
-            });
-            if (gen !== watchGen) return merged;
-            merged = merged ? mergeWatchSnapshots(merged, next) : next;
-            from += n;
-            merged.scanned = Math.min(from, UTXO_SCAN_CAP);
-            get().setLastWatch(merged);
-            if (!next.unspents.length) break;
+          for (const chain of [
+            { receive: true, change: false },
+            { receive: false, change: true },
+          ] as const) {
+            let from = 0;
+            while (from < UTXO_SCAN_CAP) {
+              const next = await scanWatchWallet(cfg, descriptor, {
+                count: n,
+                receive: chain.receive,
+                change: chain.change,
+                electrum,
+                from,
+                checksum,
+              });
+              if (gen !== watchGen) return merged;
+              merged = merged ? mergeWatchSnapshots(merged, next) : next;
+              from += n;
+              merged.scanned = Math.min(from, UTXO_SCAN_CAP);
+              get().setLastWatch(merged);
+              if (!next.more) break;
+            }
           }
           if (gen === watchGen) set({ scanningWatch: false });
           return merged;
