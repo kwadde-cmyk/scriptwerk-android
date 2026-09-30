@@ -15,6 +15,7 @@ import { uid } from "@/lib/utils";
 import { useBitcoind } from "@/store/bitcoind";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
+import { Tip } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -313,6 +314,7 @@ function StageCard({
           <span className="mt-1 block font-mono text-2xs text-fg-muted">{stageFormula(stage)}</span>
         </button>
         {canRemove && !locked ? (
+          <Tip label={t("stages.remove")}>
           <Button
             variant="ghost"
             size="icon"
@@ -323,6 +325,7 @@ function StageCard({
           >
             <Trash2 />
           </Button>
+          </Tip>
         ) : null}
       </div>
 
@@ -618,6 +621,7 @@ function Stepper({
     <div>
       <Label>{label}</Label>
       <div className="mt-1.5 flex items-center gap-1">
+        <Tip label={t("stages.dec", { label })}>
         <Button
           type="button"
           variant="outline"
@@ -629,9 +633,11 @@ function Stepper({
         >
           <Minus />
         </Button>
+        </Tip>
         <span className="flex h-10 min-w-10 flex-1 items-center justify-center font-mono text-sm tabular-nums">
           {value}
         </span>
+        <Tip label={t("stages.inc", { label })}>
         <Button
           type="button"
           variant="outline"
@@ -643,6 +649,7 @@ function Stepper({
         >
           <Plus />
         </Button>
+        </Tip>
       </div>
     </div>
   );

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { keyHeadline } from "@/lib/miniscript/keys";
 import { coinHeightFromConfirms, evaluateSpendPaths } from "@/lib/miniscript/spend-check";
-import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
-import { formatAmount } from "@/lib/hw/address-check";
+import { policyIsFrozen, compiledForStudio } from "@/lib/miniscript/policy-mode";
+import { checksumOf } from "@/lib/miniscript/checksum";
+import { AmountInline } from "@/components/amount";
 import { fetchElectrumTip } from "@/lib/bitcoind/rpc";
 import { useBitcoind } from "@/store/bitcoind";
 import { useStudio } from "@/store/studio";
@@ -16,8 +17,7 @@ import { numberLocale } from "@/lib/i18n";
 export function SpendCheckCard() {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
-  const unit = useStudio((s) => s.amountUnit);
-  const amt = (n: number) => formatAmount(n, unit, nloc).label;
+  const compiled = useStudio(compiledForStudio);
   const keys = useStudio((s) => s.keys);
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
@@ -26,7 +26,7 @@ export function SpendCheckCard() {
   const selectedStageId = useStudio((s) => s.selectedStageId);
   const probe = useBitcoind((s) => s.probe);
   const status = useBitcoind((s) => s.status);
-  const lastUtxo = useBitcoind((s) => s.lastUtxo);
+  const lastWatch = useBitcoind((s) => s.lastWatch);
   const [present, setPresent] = useState<string[]>([]);
   const [tip, setTip] = useState(0);
   const [tipSource, setTipSource] = useState<"core" | "electrum" | "manual">("manual");
@@ -38,7 +38,10 @@ export function SpendCheckCard() {
     () => keys.filter((k) => k.name.trim()).sort((a, b) => a.name.localeCompare(b.name)),
     [keys],
   );
-  const coins = useMemo(() => lastUtxo?.coins ?? [], [lastUtxo]);
+  const coins = useMemo(() => {
+    if (!compiled?.ok || !lastWatch || lastWatch.checksum !== checksumOf(compiled.descriptor)) return [];
+    return lastWatch.unspents.map((u) => ({ height: u.height, amount: u.amount }));
+  }, [compiled, lastWatch]);
   const coinHeight = coins.length ? 0 : coinHeightFromConfirms(tip, confirms);
   const report = useMemo(
     () =>
@@ -62,11 +65,11 @@ export function SpendCheckCard() {
       setBusy(false);
       return;
     }
-    if (lastUtxo && lastUtxo.height > 0) {
-      setTip((cur) => (cur > 0 ? cur : lastUtxo.height));
+    if (lastWatch && lastWatch.height > 0) {
+      setTip((cur) => (cur > 0 ? cur : lastWatch.height));
       setTipSource((cur) => (cur === "manual" ? "electrum" : cur));
     }
-  }, [status, probe, lastUtxo]);
+  }, [status, probe, lastWatch]);
 
   async function loadElectrumTip() {
     setBusy(true);
@@ -142,7 +145,7 @@ export function SpendCheckCard() {
         </div>
         {coins.length ? (
           <p className="text-2xs text-fg-muted">
-            {t("spend.utxoCount", { n: coins.length, btc: amt(report.total) })}
+            {t("spend.utxoCount", { n: coins.length })} <AmountInline btc={report.total} />
             {report.confirmations
               ? ` · ${t("spend.oldest", { n: report.confirmations.toLocaleString(nloc) })}`
               : ""}
@@ -195,7 +198,7 @@ export function SpendCheckCard() {
                   <Badge variant={s.canSpendNow ? "ok" : s.canSign ? "warn" : "danger"}>
                     {s.canSpendNow
                       ? s.amountNow > 0
-                        ? t("spend.nowBtc", { btc: amt(s.amountNow) })
+                        ? <span className="inline-flex items-center gap-1"><AmountInline btc={s.amountNow} /> {t("spend.now")}</span>
                         : t("spend.now")
                       : s.canSign
                         ? t("spend.wait", { n: s.blocksLeft.toLocaleString(nloc) })
@@ -204,20 +207,20 @@ export function SpendCheckCard() {
                 </div>
                 {s.canSign && s.amountNow > 0 && s.nextAmount > 0 ? (
                   <p className="mt-1 text-2xs text-fg">
-                    {t("spend.nextOpens", {
-                      btc: amt(s.nextAmount),
-                      n: s.nextBlocks.toLocaleString(nloc),
-                    })}
+                    {t("spend.nextOpens", { n: s.nextBlocks.toLocaleString(nloc) })}{" "}
+                    <AmountInline btc={s.nextAmount} />
                   </p>
                 ) : s.canSign && !s.lockOpen ? (
                   <p className="mt-1 text-2xs text-fg-muted">
-                    {s.coinCount
-                      ? t("spend.firstOpens", {
+                    {s.coinCount ? (
+                      <>
+                        <AmountInline btc={s.nextAmount || report.total} />{" "}
+                        {t("spend.firstOpens", {
                           n: s.blocksLeft.toLocaleString(nloc),
                           h: s.opensAt.toLocaleString(nloc),
-                          btc: amt(s.nextAmount || report.total),
-                        })
-                      : t("spend.lockLeft", {
+                        })}
+                      </>
+                    ) : t("spend.lockLeft", {
                           n: s.blocksLeft.toLocaleString(nloc),
                           h: s.opensAt.toLocaleString(nloc),
                         })}

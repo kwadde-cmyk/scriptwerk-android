@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useT } from "@/lib/use-t";
 import { cn } from "@/lib/utils";
+import { Tip } from "@/components/ui/tooltip";
 
 export function shortenAddress(value: string, head = 8, tail = 6): string {
   const s = value.trim();
@@ -41,15 +42,16 @@ export function AddressLine({
         {shortenAddress(text)}
       </button>
       <CopyButton value={text} label={t("addr.copy")} className="size-9" />
+      <Tip label={t("addr.openQr")}>
       <button
         type="button"
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-muted hover:text-fg"
         aria-label={t("addr.openQr")}
-        title={t("addr.openQr")}
         onClick={() => setOpen(true)}
       >
         <QrCode className="size-3.5" />
       </button>
+      </Tip>
       <AddressQrDialog address={text} label={title} open={open} onOpenChange={setOpen} />
     </span>
   );

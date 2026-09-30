@@ -2,6 +2,8 @@ import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/use-t";
+import { Tip } from "@/components/ui/tooltip";
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -27,6 +29,7 @@ const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => {
+  const { t } = useT();
   React.useEffect(() => {
     return () => {
       document.body.style.pointerEvents = "";
@@ -45,10 +48,12 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute top-3 right-3 rounded-md p-2 text-fg-muted hover:bg-muted hover:text-fg">
+      <Tip label={t("ui.close")}>
+      <DialogPrimitive.Close className="absolute top-3 right-3 rounded-md p-2 text-fg-muted hover:bg-muted hover:text-fg" aria-label={t("ui.close")}>
         <X className="size-4" />
-        <span className="sr-only">Schließen</span>
+        <span className="sr-only">{t("ui.close")}</span>
       </DialogPrimitive.Close>
+      </Tip>
     </DialogPrimitive.Content>
   </DialogPortal>
   );

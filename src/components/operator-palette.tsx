@@ -4,6 +4,7 @@ import { delayPresets } from "@/lib/miniscript/stages";
 import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
+import { Tip } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -168,16 +169,19 @@ function ParamDialog({
                       value={item}
                       onChange={(v) => setKeys(keys.map((x, j) => (j === i ? v : x)))}
                     />
+                    <Tip label={t("ops.remove")}>
                     <Button
                       type="button"
                       variant="outline"
                       size="icon"
                       className="size-11 shrink-0"
+                      aria-label={t("ops.remove")}
                       onClick={() => setKeys(keys.filter((_, j) => j !== i))}
                       disabled={keys.length <= 2}
                     >
                       <Minus />
                     </Button>
+                    </Tip>
                   </div>
                 ))}
                 <Button

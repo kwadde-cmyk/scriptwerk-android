@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useT } from "@/lib/use-t";
 import { CopyButton, Copyable } from "@/components/copy-button";
+import { Tip } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { KeyRound, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
@@ -190,15 +191,16 @@ function KeyTile({
           {childTotal > 0 ? <NestedKeyStack present={childPresent} total={childTotal} compact /> : null}
         </button>
         {fp ? <CopyButton value={fp} className="self-center" /> : null}
+        <Tip label={t("keys.delete")}>
         <button
           type="button"
           aria-label={t("keys.delete")}
-          title={t("keys.delete")}
           onClick={onDelete}
           className="shrink-0 px-2 text-fg-muted hover:text-danger"
         >
           <Trash2 className="size-3.5" />
         </button>
+        </Tip>
       </div>
     );
   }
@@ -223,15 +225,16 @@ function KeyTile({
         <span className={`shrink-0 font-mono text-2xs ${needsAction ? "text-danger" : "text-fg-subtle"}`}>{role}</span>
         {childTotal > 0 ? <NestedKeyStack present={childPresent} total={childTotal} compact /> : null}
       </button>
+      <Tip label={t("keys.delete")}>
       <button
         type="button"
         aria-label={t("keys.delete")}
-        title={t("keys.delete")}
         onClick={onDelete}
         className="absolute top-2.5 right-2.5 text-fg-muted hover:text-danger"
       >
         <Trash2 className="size-3.5" />
       </button>
+      </Tip>
       <p className="mt-0.5 inline-flex items-center gap-0.5 font-mono text-2xs text-fg-muted">
         {fp || "—"}
         {fp ? <CopyButton value={fp} /> : null}
@@ -736,6 +739,7 @@ function KeyImportDialog({
                           <span className="block font-mono text-2xs text-fg-muted">{c.path}</span>
                           <XpubLine xpub={c.xpub} />
                         </span>
+                        <Tip label={t("keys.childRemove")}>
                         <button
                           type="button"
                           className="shrink-0 rounded-md p-1 text-fg-muted hover:bg-muted hover:text-fg"
@@ -744,6 +748,7 @@ function KeyImportDialog({
                         >
                           <X className="size-3.5" />
                         </button>
+                        </Tip>
                       </li>
                     ))}
                   </ul>

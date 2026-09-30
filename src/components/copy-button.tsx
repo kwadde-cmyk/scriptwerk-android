@@ -3,6 +3,7 @@ import { Check, Copy } from "lucide-react";
 import { useT } from "@/lib/use-t";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Tip } from "@/components/ui/tooltip";
 
 export function CopyButton({
   value,
@@ -18,6 +19,7 @@ export function CopyButton({
   const text = value.trim();
   if (!text) return null;
   return (
+    <Tip label={label || t("read.copy")}>
     <button
       type="button"
       className={cn(
@@ -25,7 +27,6 @@ export function CopyButton({
         className,
       )}
       aria-label={label || t("read.copy")}
-      title={label || t("read.copy")}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -38,6 +39,7 @@ export function CopyButton({
     >
       {ok ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
     </button>
+    </Tip>
   );
 }
 

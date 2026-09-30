@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { compiledForStudio } from "@/lib/miniscript/policy-mode";
-import { clampUtxoCount, formatBtc, mergeUtxoResults, UTXO_SCAN_CAP, type UtxoScanResult } from "@/lib/hw/address-check";
+import { clampUtxoCount, formatAmount, mergeUtxoResults, UTXO_SCAN_CAP, type UtxoScanResult } from "@/lib/hw/address-check";
+import { AmountInline } from "@/components/amount";
 import { scanDescriptorUtxos } from "@/lib/bitcoind/rpc";
 import { useBitcoind } from "@/store/bitcoind";
 import { useStudio } from "@/store/studio";
@@ -70,7 +71,7 @@ export function UtxoScanPanel({
         coins: merged.unspents.map((u) => ({ height: u.height, amount: u.amount })),
       });
       if (merged.unspents.length) {
-        toast.success(t("hw.utxo.found", { n: merged.unspents.length, btc: formatBtc(merged.total) }));
+        toast.success(`${t("hw.utxo.found", { n: merged.unspents.length })} · ${formatAmount(merged.total, "btc", "en-US").label}`);
       } else {
         toast.success(t("hw.utxo.empty", { n: merged.scanned ?? n }));
       }
@@ -114,7 +115,7 @@ export function UtxoScanPanel({
       {result && !busy ? (
         <p className="text-xs text-fg">
           {result.unspents.length
-            ? `${t("hw.utxo.found", { n: result.unspents.length, btc: formatBtc(result.total) })} · ${t("hw.utxo.scanned", { n: result.scanned ?? scanned })}`
+            ? <>{t("hw.utxo.found", { n: result.unspents.length })} <AmountInline btc={result.total} /> · {t("hw.utxo.scanned", { n: result.scanned ?? scanned })}</>
             : t("hw.utxo.empty", { n: result.scanned ?? count })}
           {result.coreMatch === true ? ` · ${t("hw.utxo.coreMatch")}` : ""}
           {result.coreMatch === false ? ` · ${t("hw.utxo.coreSkip")}` : ""}
@@ -125,7 +126,7 @@ export function UtxoScanPanel({
           <table className="w-full text-left font-mono text-2xs">
             <thead className="text-fg-subtle">
               <tr>
-                <th className="pr-2 font-normal">{t("hw.utxo.colAmount")}</th>
+                <th className="pr-2 font-normal"><span className="sr-only">{t("wallet.unit")}</span></th>
                 <th className="pr-2 font-normal">{t("hw.utxo.colTxid")}</th>
                 <th className="pr-2 font-normal">{t("hw.utxo.colVout")}</th>
                 <th className="font-normal">{t("hw.utxo.colHeight")}</th>
@@ -134,7 +135,7 @@ export function UtxoScanPanel({
             <tbody>
               {result.unspents.map((u) => (
                 <tr key={`${u.txid}:${u.vout}`}>
-                  <td className="py-0.5 pr-2 align-top">{formatBtc(u.amount)}</td>
+                  <td className="py-0.5 pr-2 align-top"><AmountInline btc={u.amount} /></td>
                   <td className="max-w-[10rem] py-0.5 pr-2 align-top">
                     <span className="inline-flex max-w-full items-start gap-0.5">
                       <span className="min-w-0 break-all">

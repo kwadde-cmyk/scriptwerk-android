@@ -24,4 +24,14 @@ const TooltipContent = React.forwardRef<
 ));
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
+export function Tip({ label, children }: { label: string; children: React.ReactElement }) {
+  if (!label) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };

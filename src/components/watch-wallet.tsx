@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CopyButton } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
-import { AmountText } from "@/components/amount";
+import { AmountInline, AmountText } from "@/components/amount";
 import { FilePick } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
 import { localizeMessage, numberLocale } from "@/lib/i18n";
@@ -219,11 +219,16 @@ export function WatchWalletPanel() {
           {snap ? <AmountText btc={snap.total} /> : "—"}
         </p>
         {snap ? (
-          <p className="mt-1 text-2xs text-fg-muted">
-            {t("wallet.confirmed", { amount: formatAmount(snap.confirmed, unit, nloc).label })}
-            {snap.unconfirmed > 0
-              ? ` · ${t("wallet.mempool", { amount: formatAmount(snap.unconfirmed, unit, nloc).label })}`
-              : ""}
+          <p className="mt-1 inline-flex flex-wrap items-center gap-x-1 text-2xs text-fg-muted">
+            <AmountInline btc={snap.confirmed} />
+            {t("wallet.confirmed")}
+            {snap.unconfirmed > 0 ? (
+              <>
+                <span>·</span>
+                <AmountInline btc={snap.unconfirmed} />
+                {t("wallet.mempool")}
+              </>
+            ) : null}
             {snap.height ? ` · ${t("wallet.tip", { n: snap.height.toLocaleString(nloc) })}` : ""}
             {snap.coreMatch === true ? ` · ${t("hw.utxo.coreMatch")}` : ""}
             {snap.coreMatch === false ? ` · ${t("hw.utxo.coreSkip")}` : ""}

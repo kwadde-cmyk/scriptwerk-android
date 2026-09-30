@@ -9,7 +9,7 @@ import { PolicyGraph } from "@/components/policy-graph";
 import { StageBuilder, ExpertPolicySettings } from "@/components/stage-builder";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider, Tip } from "@/components/ui/tooltip";
 import { defaultStages } from "@/lib/miniscript/stages";
 import { policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { useStudio } from "@/store/studio";
@@ -228,15 +228,16 @@ function PaneToggle({
   children: ReactNode;
 }) {
   return (
+    <Tip label={label}>
     <button
       type="button"
       aria-label={label}
-      title={label}
       onClick={onClick}
       className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border text-fg-muted hover:bg-muted hover:text-fg"
     >
       {children}
     </button>
+    </Tip>
   );
 }
 

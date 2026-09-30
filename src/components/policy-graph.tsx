@@ -9,6 +9,7 @@ import { useStudio } from "@/store/studio";
 import { PolicyNameHeading } from "@/components/policy-title";
 import { ZoomPane } from "@/components/zoom-pane";
 import { Button } from "@/components/ui/button";
+import { Tip } from "@/components/ui/tooltip";
 import { GitBranch, Lock, Unlock } from "lucide-react";
 import { useT } from "@/lib/use-t";
 
@@ -116,6 +117,7 @@ export const PolicyGraph = memo(function PolicyGraph() {
           contentHeight={Math.max(layout.height, 240)}
           selectedRect={selectedRect}
           toolbar={
+            <Tip label={t("graph.locks")}>
             <Button
               type="button"
               variant={locks ? "default" : "outline"}
@@ -137,6 +139,7 @@ export const PolicyGraph = memo(function PolicyGraph() {
             >
               {locks ? <Unlock /> : <Lock />}
             </Button>
+            </Tip>
           }
         >
           <svg

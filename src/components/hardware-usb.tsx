@@ -33,6 +33,7 @@ import { CopyButton, Copyable } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { UtxoScanPanel } from "@/components/utxo-scan";
+import { Tip } from "@/components/ui/tooltip";
 import { Usb } from "lucide-react";
 import { toast } from "sonner";
 
@@ -49,12 +50,14 @@ export function HardwareButton() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
+      <Tip label={t("header.usb")}>
       <DialogTrigger asChild>
         <Button variant="outline" size="icon" className="relative size-9" aria-label={t("header.usb")} aria-pressed={ready}>
           <Usb />
           {ready ? <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-ok" aria-hidden /> : null}
         </Button>
       </DialogTrigger>
+      </Tip>
       <HardwareDialogBody />
     </Dialog>
   );

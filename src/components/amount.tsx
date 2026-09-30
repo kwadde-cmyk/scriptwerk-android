@@ -3,6 +3,7 @@ import { formatAmount, type AmountUnit } from "@/lib/hw/address-check";
 import { useStudio } from "@/store/studio";
 import { useT } from "@/lib/use-t";
 import { numberLocale } from "@/lib/i18n";
+import { Tip } from "@/components/ui/tooltip";
 
 function BtcIcon({ className }: { className?: string }) {
   return (
@@ -36,8 +37,29 @@ function SatsIcon({ className }: { className?: string }) {
   );
 }
 
-function UnitGlyph({ kind, className = "size-4" }: { kind: "btc" | "sats"; className?: string }) {
+export function UnitGlyph({ kind, className = "size-4" }: { kind: "btc" | "sats"; className?: string }) {
   return kind === "sats" ? <SatsIcon className={className} /> : <BtcIcon className={className} />;
+}
+
+/** Number plus the unit icon. No unit word. */
+export function AmountInline({
+  btc,
+  className,
+  coins,
+}: {
+  btc: number;
+  className?: string;
+  coins?: boolean;
+}) {
+  const { locale } = useT();
+  const unit = useStudio((s) => s.amountUnit);
+  const f = formatAmount(btc, coins ? "btc" : unit, numberLocale(locale));
+  return (
+    <span className={`inline-flex items-center gap-1 tabular-nums ${className ?? ""}`} title={f.exact}>
+      <span>{f.text}</span>
+      <UnitGlyph kind={f.kind} className="size-3.5" />
+    </span>
+  );
 }
 
 export function AmountText({
@@ -78,29 +100,29 @@ export function AmountUnitSwitch() {
   const { t } = useT();
   const unit = useStudio((s) => s.amountUnit);
   const setAmountUnit = useStudio((s) => s.setAmountUnit);
-  const opts: { id: AmountUnit; label: string; icon: ReactNode }[] = [
-    { id: "btc", label: t("wallet.unitBtc"), icon: <BtcIcon className="size-5" /> },
-    { id: "sats", label: t("wallet.unitSats"), icon: <SatsIcon className="size-5" /> },
-    { id: "auto", label: t("wallet.unitAuto"), icon: null },
+  const opts: { id: AmountUnit; label: string; tip: string; icon: ReactNode }[] = [
+    { id: "btc", label: t("wallet.unitBtc"), tip: t("wallet.unitBtcTip"), icon: <BtcIcon className="size-5" /> },
+    { id: "sats", label: t("wallet.unitSats"), tip: t("wallet.unitSatsTip"), icon: <SatsIcon className="size-5" /> },
+    { id: "auto", label: t("wallet.unitAuto"), tip: t("wallet.unitAutoTip"), icon: null },
   ];
   return (
     <div role="group" aria-label={t("wallet.unit")} className="flex shrink-0 flex-wrap gap-1">
       {opts.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          aria-pressed={unit === o.id}
-          aria-label={o.label}
-          title={o.label}
-          onClick={() => setAmountUnit(o.id)}
-          className={
-            unit === o.id
-              ? "inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-primary px-2 text-2xs text-primary-foreground"
-              : "inline-flex h-8 min-w-8 items-center justify-center rounded-full border border-border px-2 text-2xs text-fg-muted hover:bg-muted hover:text-fg"
-          }
-        >
-          {o.icon ?? o.label}
-        </button>
+        <Tip key={o.id} label={o.tip}>
+          <button
+            type="button"
+            aria-pressed={unit === o.id}
+            aria-label={o.tip}
+            onClick={() => setAmountUnit(o.id)}
+            className={
+              unit === o.id
+                ? "inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-primary px-2 text-2xs text-primary-foreground"
+                : "inline-flex h-8 min-w-8 items-center justify-center rounded-full border border-border px-2 text-2xs text-fg-muted hover:bg-muted hover:text-fg"
+            }
+          >
+            {o.icon ?? o.label}
+          </button>
+        </Tip>
       ))}
     </div>
   );

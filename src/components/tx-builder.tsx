@@ -2,7 +2,10 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { QrCode, Trash2 } from "lucide-react";
 import { addressFromScan, addedSignaturePubkeys, btcToSats, buildPsbt, estimateVbytes, expandSpots, extractSignedTx, feeFromRate, mergePsbtSignatures, planPayments, samePsbtTransaction, satsFromDecimal, satsToDecimal, type ScriptSpot } from "@/lib/tx/psbt";
 import { signatureReport } from "@/lib/tx/sigs";
-import { formatAmount, type UtxoHit, type WatchAddr } from "@/lib/hw/address-check";
+import { type UtxoHit, type WatchAddr } from "@/lib/hw/address-check";
+import { AmountInline } from "@/components/amount";
+import { Tip } from "@/components/ui/tooltip";
+import { checksumOf } from "@/lib/miniscript/checksum";
 import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
 import { describeStageSlots, type Stage } from "@/lib/miniscript/stages";
 import { lockWhen } from "@/lib/miniscript/keys";
@@ -112,16 +115,17 @@ function SendPane({
 }) {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
-  const unit = useStudio((s) => s.amountUnit);
-  const coins = useBitcoind((s) => s.lastWatch?.unspents) ?? NO_COINS;
-  const addresses = useBitcoind((s) => s.lastWatch?.addresses) ?? NO_ADDRS;
-  const watchHeight = useBitcoind((s) => s.lastWatch?.height) ?? 0;
+  const root = useStudio((s) => s.root);
+  const compiled = useStudio(compiledForStudio);
+  const watch = useBitcoind((s) => s.lastWatch);
+  const watchOk = watch && compiled?.ok && watch.checksum === checksumOf(compiled.descriptor) ? watch : null;
+  const coins = watchOk?.unspents ?? NO_COINS;
+  const addresses = watchOk?.addresses ?? NO_ADDRS;
+  const watchHeight = watchOk?.height ?? 0;
   const probeBlocks = useBitcoind((s) => (s.probe && s.probe.chain !== "demo" ? s.probe.blocks : 0)) ?? 0;
   const tip = probeBlocks || watchHeight;
   const stages = useStudio((s) => s.stages);
   const reuse = useStudio((s) => s.reuseKeys);
-  const root = useStudio((s) => s.root);
-  const compiled = useStudio(compiledForStudio);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
@@ -129,6 +133,8 @@ function SendPane({
   const [change, setChange] = useState("");
   const [changeEdited, setChangeEdited] = useState(false);
   const [rate, setRate] = useState("2");
+  const [feeAbs, setFeeAbs] = useState("");
+  const [feeSource, setFeeSource] = useState<"rate" | "abs">("rate");
   const [psbt, setPsbt] = useState("");
   const [dustWarn, setDustWarn] = useState(false);
   const [feeOnChange, setFeeOnChange] = useState(false);
@@ -151,7 +157,7 @@ function SendPane({
     sigs: size.sigs,
     keys: size.keys,
   });
-  const feeSats = feeFromRate(Number(rate.replace(",", ".")), vbytes);
+  const feeSats = resolveFee(feeSource, rate, feeAbs, vbytes);
   const canFromChange = inputSats - gross - feeSats >= 546;
   const useChange = feeOnChange && canFromChange;
   const changeLeft = useChange ? inputSats - gross - feeSats : inputSats - gross;
@@ -205,7 +211,7 @@ function SendPane({
         {t("tx.pick")}
       </Button>
       <p className="font-mono text-sm">
-        {t("tx.sum")} {formatAmount(sumBtc, unit, nloc).label}
+        {t("tx.sum")} <AmountInline btc={sumBtc} />
         <span className="ml-2 text-2xs text-fg-muted">{t("tx.coinN", { n: String(selected.length) })}</span>
       </p>
       {rows.map((row, i) => (
@@ -219,6 +225,7 @@ function SendPane({
                 onChange={(address) => setRows((cur) => cur.map((r) => (r.id === row.id ? { ...r, address } : r)))}
               />
             </div>
+            <Tip label={t("tx.remove")}>
             <Button
               type="button"
               variant="outline"
@@ -229,6 +236,7 @@ function SendPane({
             >
               <Trash2 />
             </Button>
+            </Tip>
           </div>
           <div>
             <Label htmlFor={`tx-amt-${row.id}`}>{t("tx.amount")}</Label>
@@ -279,11 +287,8 @@ function SendPane({
       ) : !changeValue ? (
         <p className="text-2xs text-fg-muted">{t("tx.noChange")}</p>
       ) : null}
-      <div className="flex items-end gap-2">
-        <div className="w-24">
-          <Label htmlFor="tx-fee">{t("tx.feeRate")}</Label>
-          <Input id="tx-fee" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 font-mono" />
-        </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <FeePair id="tx-fee" vbytes={vbytes} rate={rate} abs={feeAbs} source={feeSource} onRate={setRate} onAbs={setFeeAbs} onSource={setFeeSource} />
         <Button type="button" variant={useChange ? "secondary" : "outline"} aria-pressed={useChange} disabled={!canFromChange} onClick={() => setFeeOnChange((v) => !v)}>
           {t("tx.feeFromChange")}
         </Button>
@@ -334,7 +339,7 @@ function SendPane({
                           </span>
                         ) : null}
                       </span>
-                      <span className="shrink-0 tabular-nums">{formatAmount(c.amount, unit, nloc).label}</span>
+                      <span className="shrink-0"><AmountInline btc={c.amount} /></span>
                     </button>
                   </li>
                 );
@@ -376,16 +381,17 @@ function RecoveryPane({
   takeSignature: (next: string) => { merged: string; gained: boolean };
 }) {
   const { t, locale } = useT();
-  const nloc = numberLocale(locale);
-  const unit = useStudio((s) => s.amountUnit);
   const stages = useStudio((s) => s.stages);
   const reuse = useStudio((s) => s.reuseKeys);
   const root = useStudio((s) => s.root);
   const compiled = useStudio(compiledForStudio);
-  const snap = useBitcoind((s) => s.lastWatch);
+  const watch = useBitcoind((s) => s.lastWatch);
+  const snap = watch && compiled?.ok && watch.checksum === checksumOf(compiled.descriptor) ? watch : null;
   const probe = useBitcoind((s) => s.probe);
   const tip = probe?.blocks && probe.chain !== "demo" ? probe.blocks : snap?.height ?? 0;
   const [rate, setRate] = useState("2");
+  const [feeAbs, setFeeAbs] = useState("");
+  const [feeSource, setFeeSource] = useState<"rate" | "abs">("rate");
   const [built, setBuilt] = useState<{ id: string; psbt: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -417,7 +423,7 @@ function RecoveryPane({
         if (row.dest === row.coin.address) throw new Error("tx.err.reuse");
         const size = spendSize(stages, reuse, pathIndex ?? 0);
         const vb = estimateVbytes({ inputs: 1, outputs: [row.dest], sigs: size.sigs, keys: size.keys });
-        const feeSats = feeFromRate(Number(rate.replace(",", ".")), vb);
+        const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
         const locks = pathLock(stages, pathIndex ?? 0);
         const plan = planPayments({
           coins: [asCoin(row.coin)],
@@ -446,10 +452,7 @@ function RecoveryPane({
   return (
     <section className="space-y-3">
       <p className="text-2xs text-pretty text-fg-muted">{t("tx.recoveryBlurb")}</p>
-      <div>
-        <Label htmlFor="tx-rec-fee">{t("tx.feeRate")}</Label>
-        <Input id="tx-rec-fee" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} className="mt-1 font-mono" />
-      </div>
+      <FeePair id="tx-rec-fee" vbytes={rows[0] ? estimateVbytes({ inputs: 1, outputs: [rows[0].dest || ""], sigs: spendSize(stages, reuse, pathIndex ?? 0).sigs, keys: spendSize(stages, reuse, pathIndex ?? 0).keys }) : 0} rate={rate} abs={feeAbs} source={feeSource} onRate={setRate} onAbs={setFeeAbs} onSource={setFeeSource} />
       {!rows.length ? <p className="text-xs text-fg-muted">{t("tx.recoveryEmpty")}</p> : null}
       <ul className="space-y-3">
         {rows.map((row) => {
@@ -457,7 +460,7 @@ function RecoveryPane({
           const psbt = built.find((b) => b.id === id)?.psbt ?? "";
           const size = spendSize(stages, reuse, pathIndex ?? 0);
           const vb = estimateVbytes({ inputs: 1, outputs: [row.dest || ""], sigs: size.sigs, keys: size.keys });
-          const feeSats = feeFromRate(Number(rate.replace(",", ".")), vb);
+          const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
           const outSats = Math.max(0, btcToSats(row.coin.amount) - feeSats);
           return (
             <li key={id} className="space-y-2 rounded-md border border-border p-3">
@@ -465,7 +468,7 @@ function RecoveryPane({
               <p className="break-all font-mono text-xs">{t("tx.from")} {row.coin.address}</p>
               <p className="break-all font-mono text-xs">{t("tx.to")} {row.dest || t("tx.noFresh")}</p>
               <p className="text-xs text-fg-muted">
-                {formatAmount(outSats / 1e8, unit, nloc).label} · {t("tx.feeHint", { vb: String(vb), sats: String(feeSats) })}
+                <AmountInline btc={outSats / 1e8} /> · {t("tx.feeHint", { vb: String(vb), sats: String(feeSats) })}
               </p>
               <div className="flex flex-wrap gap-2">
                 {psbt ? (
@@ -649,9 +652,11 @@ function AddressField({ id, label, value, onChange }: { id: string; label: strin
       <Label htmlFor={id}>{label}</Label>
       <div className="mt-1 flex gap-2">
         <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} className="font-mono" autoComplete="off" spellCheck={false} />
+        <Tip label={t("tx.scan")}>
         <Button type="button" variant="outline" size="icon" aria-label={t("tx.scan")} onClick={() => setScan(true)}>
           <QrCode />
         </Button>
+        </Tip>
       </div>
       <Dialog open={scan} onOpenChange={setScan}>
         <DialogContent>
@@ -683,6 +688,74 @@ function PsbtExport({ value, name, extra }: { value: string; name: string; extra
       </div>
       {qr ? <QrPreview value={value} label={t("tx.exportQr")} compact /> : null}
     </div>
+  );
+}
+
+function resolveFee(source: "rate" | "abs", rate: string, abs: string, vbytes: number): number {
+  if (source === "abs") {
+    const n = Number(abs.replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+  return feeFromRate(Number(rate.replace(",", ".")), vbytes);
+}
+
+function shownRate(source: "rate" | "abs", rate: string, feeSats: number, vbytes: number): string {
+  if (source === "rate") return rate;
+  if (vbytes < 1 || feeSats < 1) return "";
+  const n = Math.round((feeSats / vbytes) * 1000) / 1000;
+  return String(n);
+}
+
+function FeePair({
+  id,
+  vbytes,
+  rate,
+  abs,
+  source,
+  onRate,
+  onAbs,
+  onSource,
+}: {
+  id: string;
+  vbytes: number;
+  rate: string;
+  abs: string;
+  source: "rate" | "abs";
+  onRate: (v: string) => void;
+  onAbs: (v: string) => void;
+  onSource: (s: "rate" | "abs") => void;
+}) {
+  const { t } = useT();
+  const feeSats = resolveFee(source, rate, abs, vbytes);
+  return (
+    <>
+      <div className="w-28">
+        <Label htmlFor={`${id}-rate`}>{t("tx.feeRate")}</Label>
+        <Input
+          id={`${id}-rate`}
+          inputMode="decimal"
+          value={shownRate(source, rate, feeSats, vbytes)}
+          onChange={(e) => {
+            onSource("rate");
+            onRate(e.target.value);
+          }}
+          className="mt-1 font-mono"
+        />
+      </div>
+      <div className="w-32">
+        <Label htmlFor={`${id}-abs`}>{t("tx.feeAbs")}</Label>
+        <Input
+          id={`${id}-abs`}
+          inputMode="numeric"
+          value={source === "abs" ? abs : feeSats > 0 ? String(feeSats) : ""}
+          onChange={(e) => {
+            onSource("abs");
+            onAbs(e.target.value);
+          }}
+          className="mt-1 font-mono"
+        />
+      </div>
+    </>
   );
 }
 

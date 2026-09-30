@@ -23,6 +23,7 @@ import { CopyButton } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { UtxoScanPanel } from "@/components/utxo-scan";
+import { Tip } from "@/components/ui/tooltip";
 import { Loader2, Server } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -50,6 +51,7 @@ export function NodeButton() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
+      <Tip label={t("header.node")}>
       <DialogTrigger asChild>
         <Button variant="outline" size="icon" className="relative size-9" aria-label={t("header.node")} aria-pressed={ready} aria-busy={loading}>
           {loading ? <Loader2 className="animate-spin" /> : <Server />}
@@ -57,6 +59,7 @@ export function NodeButton() {
           {loading ? <span className="absolute top-1.5 right-1.5 size-1.5 animate-pulse rounded-full bg-warn" aria-hidden /> : null}
         </Button>
       </DialogTrigger>
+      </Tip>
       <NodeDialogBody />
     </Dialog>
   );

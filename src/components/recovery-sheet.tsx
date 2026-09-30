@@ -30,6 +30,7 @@ import {
 import { SheetQr } from "@/components/qr-io";
 import { useT } from "@/lib/use-t";
 import { usePolicyTitle } from "@/components/policy-title";
+import { Tip } from "@/components/ui/tooltip";
 import { ScrollText } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -46,11 +47,13 @@ export function RecoverySheetButton() {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
+      <Tip label={t("recovery.title")}>
       <DialogTrigger asChild>
         <Button variant="outline" size="icon" className="size-9" aria-label={t("recovery.title")}>
           <ScrollText />
         </Button>
       </DialogTrigger>
+      </Tip>
       <DialogContent className="grid max-h-[min(92dvh,56rem)] w-[min(52rem,calc(100vw-1rem))] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden print:hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle>{t("recovery.title")}</DialogTitle>

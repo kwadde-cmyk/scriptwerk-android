@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Maximize2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tip } from "@/components/ui/tooltip";
 import { useT } from "@/lib/use-t";
 
 const MIN_K = 0.18;
@@ -244,9 +245,12 @@ export function ZoomPane({
       </div>
       <div className="absolute right-3 bottom-3 z-10 flex gap-1">
         {toolbar}
+        <Tip label={t("graph.fit")}>
         <Button type="button" variant="outline" size="icon" className="size-9" onClick={fit} aria-label={t("graph.fit")}>
           <Maximize2 />
         </Button>
+        </Tip>
+        <Tip label={t("graph.zoomOut")}>
         <Button
           type="button"
           variant="outline"
@@ -257,6 +261,8 @@ export function ZoomPane({
         >
           <Minus />
         </Button>
+        </Tip>
+        <Tip label={t("graph.zoomIn")}>
         <Button
           type="button"
           variant="outline"
@@ -267,6 +273,7 @@ export function ZoomPane({
         >
           <Plus />
         </Button>
+        </Tip>
       </div>
     </div>
   );

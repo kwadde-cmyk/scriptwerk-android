@@ -38,6 +38,7 @@ import type { PolicySnapshot } from "@/lib/policy-library";
 import { policySig } from "@/lib/policy-library";
 import { isLocale, localizeMessage, t, type Locale } from "@/lib/i18n";
 import { isAmountUnit, type AmountUnit } from "@/lib/hw/address-check";
+import { useBitcoind } from "@/store/bitcoind";
 import {
   asStoredLabels,
   labelKey,
@@ -491,6 +492,7 @@ export const useStudio = create<StudioState>()(
           savedId,
         });
         set({ cleanSig: savedId ? policySig(get()) : "" });
+        useBitcoind.getState().setLastWatch(null);
       },
       select: (selectedId) => set({ selectedId, selectedStageId: null }),
       selectStage: (id) =>
@@ -678,6 +680,7 @@ export const useStudio = create<StudioState>()(
         });
       },
       importText: (text) => {
+        const dropCoins = () => useBitcoind.getState().setLastWatch(null);
         const blocked = assertImportableText(text);
         if (blocked) {
           set({ importError: t(get().locale, blocked) });
@@ -728,6 +731,7 @@ export const useStudio = create<StudioState>()(
                 cleanSig: "",
                 ...(bundle.labels ? { labels: mergeLabels(get().labels, bundle.labels) } : {}),
               });
+              dropCoins();
               return;
             }
             mutate({
@@ -737,6 +741,7 @@ export const useStudio = create<StudioState>()(
               }),
               ...(bundle.labels ? { labels: mergeLabels(get().labels, bundle.labels) } : {}),
             });
+            dropCoins();
           } catch (e) {
             fail(e);
           }
@@ -758,6 +763,7 @@ export const useStudio = create<StudioState>()(
                 { reuseKeys: reuse },
               ),
             );
+            dropCoins();
           } catch (e) {
             fail(e);
           }
@@ -766,6 +772,7 @@ export const useStudio = create<StudioState>()(
         const keyList = parseKeyList(peeled.body) ?? (peeled.keys.length ? peeled.keys : null);
         if (keyList) {
           mutate({ keys: mergeKeyLists(get().keys, keyList), importError: null });
+          dropCoins();
           return;
         }
         try {
@@ -778,6 +785,7 @@ export const useStudio = create<StudioState>()(
               sourceFromParse(parsed),
             ),
           );
+          dropCoins();
         } catch (e) {
           fail(e);
         }

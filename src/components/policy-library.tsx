@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/lib/use-t";
+import { Tip } from "@/components/ui/tooltip";
 import { Bookmark, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -95,11 +96,13 @@ export function PolicyLibraryButton() {
         if (v) refresh();
       }}
     >
+      <Tip label={t("library.title")}>
       <DialogTrigger asChild>
         <Button variant="outline" size="icon" className="size-9" aria-label={t("library.title")}>
           <Bookmark />
         </Button>
       </DialogTrigger>
+      </Tip>
       <DialogContent className="max-h-[min(720px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-1.5rem))] overflow-hidden">
         <DialogHeader>
           <DialogTitle>{t("library.title")}</DialogTitle>
@@ -133,6 +136,7 @@ export function PolicyLibraryButton() {
                       {new Date(p.savedAt).toLocaleString(locale === "en" ? "en-GB" : "de-DE")}
                     </div>
                   </button>
+                  <Tip label={t("library.delete")}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -142,6 +146,7 @@ export function PolicyLibraryButton() {
                   >
                     <Trash2 />
                   </Button>
+                  </Tip>
                 </li>
               ))}
             </ul>

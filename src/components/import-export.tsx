@@ -25,6 +25,7 @@ import { HardwareButton } from "@/components/hardware-usb";
 import { NodeButton } from "@/components/node-rpc";
 import { ScriptHighlight } from "@/components/script-view";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tip } from "@/components/ui/tooltip";
 import { useHardware } from "@/store/hardware";
 import { useT } from "@/lib/use-t";
 import { Download, FolderOpen, QrCode, Redo2, RotateCcw, Undo2, Usb } from "lucide-react";
@@ -140,11 +141,13 @@ export function ImportExportBar() {
       <PolicyLibraryButton />
       <RecoverySheetButton />
       <Dialog open={open} onOpenChange={setOpen}>
+        <Tip label={t("header.import")}>
         <DialogTrigger asChild>
           <Button variant="outline" size="icon" className="size-9" aria-label={t("header.import")}>
             <FolderOpen />
           </Button>
         </DialogTrigger>
+        </Tip>
         <DialogContent className="w-[min(640px,calc(100vw-1.5rem))]">
           <DialogHeader>
             <DialogTitle>{t("import.title")}</DialogTitle>
@@ -206,11 +209,13 @@ export function ImportExportBar() {
       </Dialog>
 
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+        <Tip label={t("header.export")}>
         <DialogTrigger asChild>
           <Button variant="outline" size="icon" className="size-9" aria-label={t("header.export")}>
             <QrCode />
           </Button>
         </DialogTrigger>
+        </Tip>
         <DialogContent className="grid max-h-[min(720px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
           <DialogHeader className="shrink-0">
             <DialogTitle>{t("export.title")}</DialogTitle>
@@ -291,15 +296,21 @@ export function ImportExportBar() {
         </DialogContent>
       </Dialog>
 
+      <Tip label={t("header.undo")}>
       <Button variant="ghost" size="icon" className="size-9" onClick={undo} disabled={!canUndo} aria-label={t("header.undo")}>
         <Undo2 />
       </Button>
+      </Tip>
+      <Tip label={t("header.redo")}>
       <Button variant="ghost" size="icon" className="size-9" onClick={redo} disabled={!canRedo} aria-label={t("header.redo")}>
         <Redo2 />
       </Button>
+      </Tip>
+      <Tip label={t("header.reset")}>
       <Button variant="ghost" size="icon" className="size-9" onClick={reset} aria-label={t("header.reset")}>
         <RotateCcw />
       </Button>
+      </Tip>
     </div>
   );
 }
