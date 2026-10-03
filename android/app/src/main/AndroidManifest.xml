@@ -42,6 +42,14 @@
 
         </activity>
 
+        <receiver
+            android:name=".UsbPermissionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.scriptwerk.android.USB_PERMISSION" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

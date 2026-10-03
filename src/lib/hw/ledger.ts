@@ -73,7 +73,27 @@ async function openTransport(TransportWebHID: TransportCtor) {
   }
 }
 
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("hw.err.quiet")), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export async function openLedgerSession(): Promise<HwSession> {
+  return await withTimeout(openLedgerSessionInner(), 20000);
+}
+
+async function openLedgerSessionInner(): Promise<HwSession> {
   await ensureBuffer();
   await installNativeUsbPolyfill();
   const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");

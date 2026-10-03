@@ -50,28 +50,8 @@ public class UsbHostPlugin extends Plugin {
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (ACTION_USB_PERMISSION.equals(action)) {
-                UsbDevice fromIntent = readDevice(intent);
-                final UsbDevice device = fromIntent != null ? fromIntent : pendingDevice;
-                pendingDevice = null;
-                boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
-                PluginCall call = pendingPermission;
-                pendingPermission = null;
-                if (call == null) return;
-                if (!granted || device == null) {
-                    call.reject("USB permission denied");
-                    return;
-                }
-                io.execute(() -> {
-                    try {
-                        call.resolve(openNow(device, pendingMode));
-                    } catch (Exception e) {
-                        call.reject(e.getMessage());
-                    }
-                });
-            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
-                UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(intent.getAction())) {
+                UsbDevice device = readDevice(intent);
                 if (device != null && openDevice != null && device.getDeviceId() == openDevice.getDeviceId()) {
                     JSObject ev = new JSObject();
                     ev.put("deviceId", String.valueOf(device.getDeviceId()));
@@ -82,17 +62,45 @@ public class UsbHostPlugin extends Plugin {
         }
     };
 
+    private void handlePermission(Intent intent) {
+        UsbDevice fromIntent = readDevice(intent);
+        final UsbDevice device = fromIntent != null ? fromIntent : pendingDevice;
+        pendingDevice = null;
+        boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
+        PluginCall call = pendingPermission;
+        pendingPermission = null;
+        if (call == null) return;
+        if (!granted || device == null) {
+            call.reject("USB permission denied");
+            return;
+        }
+        final String mode = pendingMode;
+        io.execute(() -> {
+            try {
+                call.resolve(openNow(device, mode));
+            } catch (Exception e) {
+                call.reject(e.getMessage());
+            }
+        });
+    }
+
+    private static UsbHostPlugin instance;
+
     @Override
     public void load() {
+        instance = this;
         usbManager = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
-        IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-        filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        IntentFilter filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
         if (Build.VERSION.SDK_INT >= 33) {
-            // The system delivers this broadcast. NOT_EXPORTED drops it on some Android 14 phones.
-            getContext().registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+            getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             getContext().registerReceiver(receiver, filter);
         }
+    }
+
+    static void deliverPermission(Intent intent) {
+        UsbHostPlugin self = instance;
+        if (self != null) self.handlePermission(intent);
     }
 
     @Override
@@ -145,13 +153,11 @@ public class UsbHostPlugin extends Plugin {
         pendingPermission = call;
         pendingDevice = device;
         pendingMode = requestedMode;
-        Intent intent = new Intent(ACTION_USB_PERMISSION);
+        Intent intent = new Intent(getContext(), UsbPermissionReceiver.class);
+        intent.setAction(ACTION_USB_PERMISSION);
         intent.setPackage(getContext().getPackageName());
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE;
-        if (Build.VERSION.SDK_INT >= 34) {
-            flags |= PendingIntent.FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT;
-        }
-        PendingIntent pi = PendingIntent.getBroadcast(getContext(), 0, intent, flags);
+        PendingIntent pi = PendingIntent.getBroadcast(getContext(), device.getDeviceId(), intent, flags);
         usbManager.requestPermission(device, pi);
     }
 
@@ -223,15 +229,16 @@ public class UsbHostPlugin extends Plugin {
     }
 
     private JSObject openNow(UsbDevice device, String requestedMode) {
+        closeQuietly();
         synchronized (usbLock) {
-            closeQuietlyLocked();
             connection = usbManager.openDevice(device);
             if (connection == null) {
                 throw new IllegalStateException("Could not open USB device");
             }
             openDevice = device;
             mode = requestedMode == null ? "hid" : requestedMode;
-            pickEndpoints(device, mode);
+            claimedInterface = chooseInterface(device, mode);
+            pickEndpoints(claimedInterface);
             if (claimedInterface != null) {
                 if (!connection.claimInterface(claimedInterface, true)) {
                     throw new IllegalStateException("Could not claim USB interface");
@@ -246,21 +253,46 @@ public class UsbHostPlugin extends Plugin {
         }
     }
 
-    private void pickEndpoints(UsbDevice device, String requestedMode) {
+    /** Ledger APDU lives on the HID interface whose report descriptor usage page is 0xFFA0, not the first HID interface. */
+    private UsbInterface chooseInterface(UsbDevice device, String requestedMode) {
+        if ("webusb".equals(requestedMode)) {
+            UsbInterface vendor = findInterface(device, 255);
+            if (vendor != null) return vendor;
+        }
+        UsbInterface ledger = null;
+        UsbInterface lastHid = null;
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            UsbInterface intf = device.getInterface(i);
+            if (intf.getInterfaceClass() != UsbConstants.USB_CLASS_HID) continue;
+            lastHid = intf;
+            if (hasLedgerUsage(intf)) {
+                ledger = intf;
+                break;
+            }
+        }
+        if (ledger != null) return ledger;
+        if (lastHid != null) return lastHid;
+        UsbInterface vendor = findInterface(device, 255);
+        if (vendor != null) return vendor;
+        return device.getInterfaceCount() > 0 ? device.getInterface(0) : null;
+    }
+
+    private boolean hasLedgerUsage(UsbInterface intf) {
+        if (connection == null) return false;
+        byte[] buf = new byte[512];
+        int len = connection.controlTransfer(0x81, 0x06, 0x2200, intf.getId(), buf, buf.length, 1000);
+        if (len < 3) return false;
+        for (int i = 0; i + 2 < len; i++) {
+            if ((buf[i] & 0xff) == 0x06 && (buf[i + 1] & 0xff) == 0xa0 && (buf[i + 2] & 0xff) == 0xff) return true;
+        }
+        return false;
+    }
+
+    private void pickEndpoints(UsbInterface chosen) {
         bulkIn = null;
         bulkOut = null;
         hidIn = null;
         hidOut = null;
-        claimedInterface = null;
-        UsbInterface vendor = findInterface(device, 255);
-        UsbInterface hid = findInterface(device, UsbConstants.USB_CLASS_HID);
-        UsbInterface chosen = "webusb".equals(requestedMode)
-            ? (vendor != null ? vendor : hid)
-            : (hid != null ? hid : vendor);
-        if (chosen == null && device.getInterfaceCount() > 0) {
-            chosen = device.getInterface(0);
-        }
-        claimedInterface = chosen;
         if (chosen == null) return;
         for (int i = 0; i < chosen.getEndpointCount(); i++) {
             UsbEndpoint ep = chosen.getEndpoint(i);
@@ -303,30 +335,16 @@ public class UsbHostPlugin extends Plugin {
 
     private void writeHid(int reportId, byte[] payload) {
         synchronized (usbLock) {
-            if (connection == null) throw new IllegalStateException("USB not open");
-            byte[] data = payload;
-            int pkt = hidOut != null ? hidOut.getMaxPacketSize() : (hidIn != null ? hidIn.getMaxPacketSize() : 64);
-            if (pkt <= 0) pkt = 64;
-            if (data.length < pkt) {
-                byte[] padded = new byte[pkt];
-                System.arraycopy(data, 0, padded, 0, data.length);
-                data = padded;
-            }
-            if (hidOut != null) {
-                // Ledger HID wants a leading report id. Without it the device ignores the frame.
-                byte[] packet = new byte[data.length + 1];
-                packet[0] = (byte) (reportId & 0xff);
-                System.arraycopy(data, 0, packet, 1, data.length);
-                int n = connection.bulkTransfer(hidOut, packet, packet.length, 2000);
-                if (n < 0) throw new IllegalStateException("HID write failed");
-                return;
-            }
-            if (claimedInterface == null) throw new IllegalStateException("No HID interface");
-            int requestType = UsbConstants.USB_DIR_OUT | 0x20 | 0x01;
+            if (connection == null || claimedInterface == null) throw new IllegalStateException("USB not open");
+            byte[] data = new byte[64];
+            System.arraycopy(payload, 0, data, 0, Math.min(payload.length, 64));
+            // SET_REPORT is what the Bitcoin app reads. A raw interrupt write on the other interface is ignored.
             int value = (2 << 8) | (reportId & 0xff);
-            int n = connection.controlTransfer(
-                requestType, 0x09, value, claimedInterface.getId(), data, data.length, 2000);
-            if (n < 0) throw new IllegalStateException("HID SET_REPORT failed");
+            int n = connection.controlTransfer(0x21, 0x09, value, claimedInterface.getId(), data, data.length, 2000);
+            if (n < 0 && hidOut != null) {
+                n = connection.bulkTransfer(hidOut, data, data.length, 2000);
+            }
+            if (n < 0) throw new IllegalStateException("HID write failed");
         }
     }
 
@@ -335,27 +353,16 @@ public class UsbHostPlugin extends Plugin {
         hidThread = new Thread(() -> {
             byte[] buf = new byte[64];
             while (hidLoop) {
-                int n = -2;
-                int max = 64;
+                int n;
                 synchronized (usbLock) {
                     if (!hidLoop || connection == null || hidIn == null) break;
-                    max = Math.max(64, hidIn.getMaxPacketSize());
-                    buf = new byte[max + 1];
-                    n = connection.bulkTransfer(hidIn, buf, buf.length, HID_TIMEOUT_MS);
+                    n = connection.bulkTransfer(hidIn, buf, 64, HID_TIMEOUT_MS);
                 }
-                if (n > 0) {
-                    int off = 0;
-                    int len = n;
-                    if (n > max && buf[0] == 0) {
-                        off = 1;
-                        len = n - 1;
-                    }
+                if (n == 64 || (n > 0 && n < 64)) {
                     JSObject ev = new JSObject();
-                    ev.put("hex", toHex(buf, off, len));
+                    ev.put("hex", toHex(buf, n));
                     ev.put("reportId", 0);
                     notifyListeners("hidInput", ev);
-                } else if (n < 0 && n != -1) {
-                    /* timeout / interrupt */
                 }
             }
         }, "scriptwerk-hid");
@@ -364,21 +371,30 @@ public class UsbHostPlugin extends Plugin {
     }
 
     private void closeQuietly() {
+        Thread t;
         synchronized (usbLock) {
-            closeQuietlyLocked();
+            hidLoop = false;
+            t = hidThread;
+            hidThread = null;
+        }
+        if (t != null) {
+            try {
+                t.join(400);
+            } catch (InterruptedException ignored) {
+            }
+        }
+        synchronized (usbLock) {
+            releaseConnectionLocked();
         }
     }
 
     private void closeQuietlyLocked() {
         hidLoop = false;
-        Thread t = hidThread;
         hidThread = null;
-        if (t != null) {
-            try {
-                t.join(200);
-            } catch (InterruptedException ignored) {
-            }
-        }
+        releaseConnectionLocked();
+    }
+
+    private void releaseConnectionLocked() {
         if (connection != null) {
             try {
                 if (claimedInterface != null) connection.releaseInterface(claimedInterface);

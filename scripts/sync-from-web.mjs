@@ -440,6 +440,13 @@ function patchI18n(src) {
   for (const [key, de, en] of hw) {
     out = upsertI18n(out, key, de, en, "hw.utxo.needElectrum");
   }
+  out = upsertI18n(
+    out,
+    "hw.err.quiet",
+    "Ledger antwortet nicht. Bitcoin-App offen, Ledger Live zu, Kabel direkt ins Telefon.",
+    "Ledger did not answer. Bitcoin app open, Ledger Live closed, cable straight into the phone.",
+    "hw.err.hid",
+  );
   const node = [
     [
       "node.err.blockedPhone",
