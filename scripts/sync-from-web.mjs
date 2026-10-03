@@ -331,6 +331,38 @@ import { installNativeUsbPolyfill } from "./native-usb.ts";`,
   return out;
 }
 
+function patchLedgerTimeout(src) {
+  if (src.includes("openLedgerSessionInner")) {
+    return src.replace(/withTimeout\(openLedgerSessionInner\(\),\s*\d+\)/, "withTimeout(openLedgerSessionInner(), 45000)");
+  }
+  if (!src.includes("export async function openLedgerSession(): Promise<HwSession> {")) return src;
+  const wrapped = src.replace(
+    "export async function openLedgerSession(): Promise<HwSession> {",
+    "async function openLedgerSessionInner(): Promise<HwSession> {",
+  );
+  return `function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("hw.err.quiet")), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+export async function openLedgerSession(): Promise<HwSession> {
+  return await withTimeout(openLedgerSessionInner(), 45000);
+}
+
+${wrapped}`;
+}
+
 function patchDiagnose(src) {
   if (src.includes("nativeRpcAvailable")) return src;
   return insertOnce(
@@ -445,6 +477,13 @@ function patchI18n(src) {
     "hw.err.quiet",
     "Ledger antwortet nicht. Bitcoin-App offen, Ledger Live zu, Kabel direkt ins Telefon.",
     "Ledger did not answer. Bitcoin app open, Ledger Live closed, cable straight into the phone.",
+    "hw.err.hid",
+  );
+  out = upsertI18n(
+    out,
+    "hw.waitLedger",
+    "USB erlauben. Die App spricht danach den Ledger an. Bitcoin-App offen, Ledger Live zu.",
+    "Allow USB. The app then talks to the Ledger. Bitcoin app open, Ledger Live closed.",
     "hw.err.hid",
   );
   const node = [
@@ -578,7 +617,10 @@ try {
   if (existsSync(typesPath)) writeFileSync(typesPath, patchTypes(readFileSync(typesPath, "utf8")));
   for (const f of ["src/lib/hw/ledger.ts", "src/lib/hw/bitbox.ts"]) {
     const p = join(root, f);
-    if (existsSync(p)) writeFileSync(p, patchHwImport(readFileSync(p, "utf8")));
+    if (!existsSync(p)) continue;
+    let next = patchHwImport(readFileSync(p, "utf8"));
+    if (f.endsWith("ledger.ts")) next = patchLedgerTimeout(next);
+    writeFileSync(p, next);
   }
   const diag = join(root, "src/lib/bitcoind/diagnose.ts");
   if (existsSync(diag)) writeFileSync(diag, patchDiagnose(readFileSync(diag, "utf8")));

@@ -90,7 +90,7 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 export async function openLedgerSession(): Promise<HwSession> {
-  return await withTimeout(openLedgerSessionInner(), 20000);
+  return await withTimeout(openLedgerSessionInner(), 45000);
 }
 
 async function openLedgerSessionInner(): Promise<HwSession> {
