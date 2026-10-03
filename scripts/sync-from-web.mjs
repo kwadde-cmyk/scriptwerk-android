@@ -196,6 +196,28 @@ export async function fetchElectrumTip(server?: string): Promise<number> {
   return out;
 }
 
+function patchPsbt(src) {
+  return insertOnce(
+    src,
+    "nativeExpandSpots",
+    `export async function expandSpots(
+  descriptor: string,
+  spots: { change: number; index: number }[],
+): Promise<ScriptSpot[]> {
+  const res = await fetch("/electrum", {`,
+    `export async function expandSpots(
+  descriptor: string,
+  spots: { change: number; index: number }[],
+): Promise<ScriptSpot[]> {
+  const { nativeRpcAvailable } = await import("../bitcoind/native-http.ts");
+  if (nativeRpcAvailable()) {
+    const { nativeExpandSpots } = await import("../bitcoind/native-electrum.ts");
+    return nativeExpandSpots(descriptor, spots);
+  }
+  const res = await fetch("/electrum", {`,
+  );
+}
+
 function patchElectrum(src) {
   if (src.includes("nativeIndexerHostAllowed")) return src;
   return `${src.trimEnd()}
@@ -541,6 +563,8 @@ try {
 
   const rpcPath = join(root, "src/lib/bitcoind/rpc.ts");
   writeFileSync(rpcPath, patchRpc(readFileSync(rpcPath, "utf8")));
+  const psbtPath = join(root, "src/lib/tx/psbt.ts");
+  if (existsSync(psbtPath)) writeFileSync(psbtPath, patchPsbt(readFileSync(psbtPath, "utf8")));
   const elPath = join(root, "src/lib/electrum.ts");
   writeFileSync(elPath, patchElectrum(readFileSync(elPath, "utf8")));
   const typesPath = join(root, "src/lib/hw/types.ts");
@@ -568,6 +592,7 @@ try {
   writeFileSync(join(root, ".web-upstream"), `${webSha}\n${WEB_REF}\n`);
 
   assertContains(rpcPath, ["nativeRpcAvailable", "nativeElectrumDeriveLookup", "nativeElectrumPing"]);
+  assertContains(join(root, "src/lib/tx/psbt.ts"), ["nativeExpandSpots"]);
   assertContains(join(root, "src/store/bitcoind.ts"), ["skipNodeBridge"]);
   assertContains(join(root, "src/lib/hw/types.ts"), ["hasWebHid()"]);
   assertContains(join(root, "src/lib/hw/ledger.ts"), ["installNativeUsbPolyfill"]);

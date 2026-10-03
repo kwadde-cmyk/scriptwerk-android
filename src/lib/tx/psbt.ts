@@ -222,6 +222,11 @@ export async function expandSpots(
   descriptor: string,
   spots: { change: number; index: number }[],
 ): Promise<ScriptSpot[]> {
+  const { nativeRpcAvailable } = await import("../bitcoind/native-http.ts");
+  if (nativeRpcAvailable()) {
+    const { nativeExpandSpots } = await import("../bitcoind/native-electrum.ts");
+    return nativeExpandSpots(descriptor, spots);
+  }
   const res = await fetch("/electrum", {
     method: "POST",
     headers: { "content-type": "application/json" },
