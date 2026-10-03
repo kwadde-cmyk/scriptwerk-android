@@ -42,6 +42,7 @@ public class UsbHostPlugin extends Plugin {
     private volatile boolean hidLoop = false;
     private Thread hidThread;
     private PluginCall pendingPermission;
+    private UsbDevice pendingDevice;
     private String pendingMode = "hid";
     private final Object usbLock = new Object();
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -51,7 +52,9 @@ public class UsbHostPlugin extends Plugin {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             if (ACTION_USB_PERMISSION.equals(action)) {
-                UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                UsbDevice fromIntent = readDevice(intent);
+                final UsbDevice device = fromIntent != null ? fromIntent : pendingDevice;
+                pendingDevice = null;
                 boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
                 PluginCall call = pendingPermission;
                 pendingPermission = null;
@@ -85,7 +88,8 @@ public class UsbHostPlugin extends Plugin {
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
         if (Build.VERSION.SDK_INT >= 33) {
-            getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            // The system delivers this broadcast. NOT_EXPORTED drops it on some Android 14 phones.
+            getContext().registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
         } else {
             getContext().registerReceiver(receiver, filter);
         }
@@ -139,12 +143,13 @@ public class UsbHostPlugin extends Plugin {
         }
         call.setKeepAlive(true);
         pendingPermission = call;
+        pendingDevice = device;
         pendingMode = requestedMode;
         Intent intent = new Intent(ACTION_USB_PERMISSION);
         intent.setPackage(getContext().getPackageName());
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= 31) {
-            flags |= PendingIntent.FLAG_MUTABLE;
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE;
+        if (Build.VERSION.SDK_INT >= 34) {
+            flags |= PendingIntent.FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT;
         }
         PendingIntent pi = PendingIntent.getBroadcast(getContext(), 0, intent, flags);
         usbManager.requestPermission(device, pi);
@@ -308,7 +313,11 @@ public class UsbHostPlugin extends Plugin {
                 data = padded;
             }
             if (hidOut != null) {
-                int n = connection.bulkTransfer(hidOut, data, data.length, 2000);
+                // Ledger HID wants a leading report id. Without it the device ignores the frame.
+                byte[] packet = new byte[data.length + 1];
+                packet[0] = (byte) (reportId & 0xff);
+                System.arraycopy(data, 0, packet, 1, data.length);
+                int n = connection.bulkTransfer(hidOut, packet, packet.length, 2000);
                 if (n < 0) throw new IllegalStateException("HID write failed");
                 return;
             }
@@ -327,14 +336,22 @@ public class UsbHostPlugin extends Plugin {
             byte[] buf = new byte[64];
             while (hidLoop) {
                 int n = -2;
+                int max = 64;
                 synchronized (usbLock) {
                     if (!hidLoop || connection == null || hidIn == null) break;
-                    buf = new byte[Math.max(64, hidIn.getMaxPacketSize())];
+                    max = Math.max(64, hidIn.getMaxPacketSize());
+                    buf = new byte[max + 1];
                     n = connection.bulkTransfer(hidIn, buf, buf.length, HID_TIMEOUT_MS);
                 }
                 if (n > 0) {
+                    int off = 0;
+                    int len = n;
+                    if (n > max && buf[0] == 0) {
+                        off = 1;
+                        len = n - 1;
+                    }
                     JSObject ev = new JSObject();
-                    ev.put("hex", toHex(buf, n));
+                    ev.put("hex", toHex(buf, off, len));
                     ev.put("reportId", 0);
                     notifyListeners("hidInput", ev);
                 } else if (n < 0 && n != -1) {
@@ -446,12 +463,24 @@ public class UsbHostPlugin extends Plugin {
         return list;
     }
 
-    private static String toHex(byte[] data, int len) {
+    private static UsbDevice readDevice(Intent intent) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
+        }
+        return intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+    }
+
+    private static String toHex(byte[] data, int off, int len) {
         StringBuilder sb = new StringBuilder(len * 2);
-        for (int i = 0; i < len; i++) {
+        int end = Math.min(data.length, off + len);
+        for (int i = off; i < end; i++) {
             sb.append(String.format(Locale.US, "%02x", data[i] & 0xff));
         }
         return sb.toString();
+    }
+
+    private static String toHex(byte[] data, int len) {
+        return toHex(data, 0, len);
     }
 
     private static byte[] fromHex(String hex) {
