@@ -44,6 +44,16 @@ npm run build:apk
 
 Output: `artifacts/Scriptwerk.apk`. Needs JDK 17 and Android SDK 34.
 
+Signed release build (needs the release keystore via `keystore.properties` or `ANDROID_KEYSTORE_FILE` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`):
+
+```bash
+npm run build:apk -- --release   # or APK_RELEASE=1 npm run build:apk
+```
+
+Output: `artifacts/release/Scriptwerk-<versionName>-code<versionCode>.apk`.
+
+CI: `.github/workflows/release-apk.yml` runs after **Sync from web**. When the version has no release yet it builds and signs the APK, creates a GitHub release and publishes it to Zapstore with [zsp](https://github.com/zapstore/zsp) (`zapstore.yaml`). Repo secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `ZAPSTORE_SIGN_WITH`.
+
 ## Upstream
 
 Policy compiler, BIP-388, Bitcoin Core / Electrum: [kwadde-cmyk/scriptwerk-startos](https://github.com/kwadde-cmyk/scriptwerk-startos).

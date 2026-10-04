@@ -1,4 +1,6 @@
-# Zapstore catalog — pubkey must match SIGN_WITH. Do not put nsec here.
+# Zapstore catalog for zsp (https://github.com/zapstore/zsp).
+# pubkey must match the key behind SIGN_WITH (secret ZAPSTORE_SIGN_WITH in CI).
+# The relay also reads this file from the repo to whitelist the pubkey. Never put the nsec here.
 name: Scriptwerk
 summary: Bitcoin-Miniscript-Studio für Android — Core-RPC und eigenes Fulcrum über TLS
 description: |
@@ -6,10 +8,13 @@ description: |
   und Fulcrum/Electrs (StartOS). Kein öffentlicher Indexer.
   USB-Hardware-Wallets und Kamera-QR in der App.
 repository: https://github.com/kwadde-cmyk/scriptwerk-android
+# Local signed APK written by `npm run build:apk -- --release` (CI: release-apk.yml).
+# Path is relative to this file; glob is allowed.
+release_source: ./artifacts/release/Scriptwerk-*.apk
 website: https://github.com/kwadde-cmyk/scriptwerk-android
 license: MIT
 pubkey: npub1hsrqgwepcd9t3t5q9nm2jjvvz626sk6fjhzyqw3ahfpgrz67034sldsnpz
-icon: public/icon-180.png
+icon: ./public/icon-180.png
 tags:
   - bitcoin
   - miniscript

@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 /**
- * Build a sideloadable debug APK with Capacitor + the Android SDK.
- * Output: /workspace/artifacts/Scriptwerk.apk
+ * Build the APK with Capacitor + the Android SDK.
+ *
+ * Debug (default):  npm run build:apk
+ *   -> artifacts/Scriptwerk.apk (+ public/Scriptwerk.apk), debug-signed.
+ * Release:          npm run build:apk -- --release   (or APK_RELEASE=1)
+ *   -> artifacts/release/Scriptwerk-<versionName>-code<versionCode>.apk,
+ *      signed via android/app/build.gradle (ANDROID_KEYSTORE_FILE + passwords,
+ *      or keystore.properties). Fails if the result is unsigned.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -14,11 +20,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = "/workspace";
-const javaHome = "/usr/lib/jvm/java-17-openjdk-amd64";
-const androidHome = process.env.ANDROID_HOME || "/tmp/android-sdk";
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const javaHome = process.env.JAVA_HOME || "/usr/lib/jvm/java-17-openjdk-amd64";
+const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || "/tmp/android-sdk";
+const buildTools = join(androidHome, "build-tools/34.0.0");
+const release = process.argv.includes("--release") || process.env.APK_RELEASE === "1";
 const outApk = join(root, "artifacts", "Scriptwerk.apk");
 
 function env() {
@@ -27,8 +36,19 @@ function env() {
     JAVA_HOME: javaHome,
     ANDROID_HOME: androidHome,
     ANDROID_SDK_ROOT: androidHome,
-    PATH: `${javaHome}/bin:${androidHome}/cmdline-tools/latest/bin:${androidHome}/platform-tools:${androidHome}/build-tools/34.0.0:${process.env.PATH}`,
+    PATH: `${javaHome}/bin:${androidHome}/cmdline-tools/latest/bin:${androidHome}/platform-tools:${buildTools}:${process.env.PATH}`,
   };
+}
+
+function gradleVersion() {
+  const g = readFileSync(join(root, "android/app/build.gradle"), "utf8");
+  const code = g.match(/versionCode\s+(\d+)/)?.[1];
+  const name = g.match(/versionName\s+"([^"]+)"/)?.[1];
+  if (!code || !name) {
+    console.error("[apk] versionCode/versionName not found in android/app/build.gradle");
+    process.exit(1);
+  }
+  return { code, name };
 }
 
 function run(cmd, args, opts = {}) {
@@ -128,19 +148,19 @@ function patchAndroidManifest() {
   // Keep the committed network_security_config (cleartext only localhost/*.local).
 }
 
-function verifyApk() {
-  const aapt = join(androidHome, "build-tools/34.0.0/aapt");
+function verifyApk(apk) {
+  const aapt = join(buildTools, "aapt");
   if (!existsSync(aapt)) {
     console.warn("[apk] aapt missing, skip permission check");
     return;
   }
-  const r = spawnSync(aapt, ["dump", "permissions", outApk], { encoding: "utf8", env: env() });
+  const r = spawnSync(aapt, ["dump", "permissions", apk], { encoding: "utf8", env: env() });
   const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
   if (!out.includes("android.permission.CAMERA")) {
     console.error("[apk] CAMERA permission missing from packaged APK\n", out);
     process.exit(1);
   }
-  const listed = spawnSync("unzip", ["-l", outApk], { encoding: "utf8" });
+  const listed = spawnSync("unzip", ["-l", apk], { encoding: "utf8" });
   const files = listed.stdout ?? "";
   if (!files.includes("index.html")) {
     console.error("[apk] index.html missing from packaged APK");
@@ -151,7 +171,7 @@ function verifyApk() {
     [
       "-c",
       "import zipfile,sys\nz=zipfile.ZipFile(sys.argv[1])\nprint(any(n.endswith('.dex') and b'ElectrumHost' in z.read(n) for n in z.namelist()))",
-      outApk,
+      apk,
     ],
     { encoding: "utf8", env: env() },
   );
@@ -199,6 +219,7 @@ UTXOs kommen **nicht** von mempool.space. Im Node-Dialog **Fulcrum oder Electrs*
 
 const publicApk = join(root, "public", "Scriptwerk.apk");
 if (existsSync(publicApk)) rmSync(publicApk);
+console.log(`[apk] mode ${release ? "release" : "debug"}`);
 
 run("npx", ["vite", "build", "--config", "vite.apk.config.ts"]);
 
@@ -228,6 +249,38 @@ writeAndroidReadme();
 writeFileSync(join(root, "android/local.properties"), `sdk.dir=${androidHome}\n`);
 
 const gradle = join(root, "android/gradlew");
+
+if (release) {
+  run(gradle, ["assembleRelease", "--no-daemon"], { cwd: join(root, "android") });
+  const outDir = join(root, "android/app/build/outputs/apk/release");
+  const signed = join(outDir, "app-release.apk");
+  if (!existsSync(signed)) {
+    const unsigned = existsSync(join(outDir, "app-release-unsigned.apk"));
+    console.error(
+      unsigned
+        ? "[apk] release APK is unsigned — set ANDROID_KEYSTORE_FILE + ANDROID_KEYSTORE_PASSWORD (+ ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD) or keystore.properties"
+        : "[apk] gradle finished but app-release.apk is missing",
+    );
+    process.exit(1);
+  }
+  const { code, name } = gradleVersion();
+  const relDir = join(root, "artifacts", "release");
+  rmSync(relDir, { recursive: true, force: true });
+  mkdirSync(relDir, { recursive: true });
+  const relApk = join(relDir, `Scriptwerk-${name}-code${code}.apk`);
+  copyFileSync(signed, relApk);
+  const apksigner = join(buildTools, "apksigner");
+  if (existsSync(apksigner)) {
+    run(apksigner, ["verify", "--verbose", "--print-certs", relApk]);
+  } else {
+    console.warn("[apk] apksigner missing, skip signature check");
+  }
+  verifyApk(relApk);
+  const mb = (statSync(relApk).size / (1024 * 1024)).toFixed(1);
+  console.log(`[apk] wrote ${relApk} (${mb} MB)`);
+  process.exit(0);
+}
+
 run(gradle, ["assembleDebug", "--no-daemon"], { cwd: join(root, "android") });
 
 const debugApk = join(root, "android/app/build/outputs/apk/debug/app-debug.apk");
@@ -238,6 +291,6 @@ if (!existsSync(debugApk)) {
 mkdirSync(join(root, "artifacts"), { recursive: true });
 copyFileSync(debugApk, outApk);
 copyFileSync(debugApk, publicApk);
-verifyApk();
+verifyApk(outApk);
 const mb = (statSync(outApk).size / (1024 * 1024)).toFixed(1);
 console.log(`[apk] wrote ${outApk} and ${publicApk} (${mb} MB)`);

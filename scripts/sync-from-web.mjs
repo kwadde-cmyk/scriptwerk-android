@@ -450,56 +450,61 @@ function upsertI18n(src, key, de, en, beforeKey) {
   return out;
 }
 
-function patchI18n(src) {
-  let out = src;
-  const hw = [
-    [
-      "hw.utxo.noPublic",
-      "Kein öffentlicher Indexer. Fulcrum oder Electrs im Heimnetz.",
-      "No public indexer. Use Fulcrum or Electrs on the LAN.",
-    ],
-    [
-      "hw.utxo.plugin",
-      "Electrum-Plugin antwortet nicht. APK deinstallieren und neu sideloaden.",
-      "Electrum plugin did not answer. Uninstall the APK and sideload again.",
-    ],
-    [
-      "hw.utxo.loopback",
-      "127.0.0.1 ist das Telefon, nicht Fulcrum. LAN-IP der Box eintragen.",
-      "127.0.0.1 is the phone, not Fulcrum. Enter the box LAN IP.",
-    ],
-  ];
-  for (const [key, de, en] of hw) {
-    out = upsertI18n(out, key, de, en, "hw.utxo.needElectrum");
-  }
-  out = upsertI18n(
-    out,
+const I18N_HW = [
+  [
+    "hw.utxo.noPublic",
+    "Kein öffentlicher Indexer. Fulcrum oder Electrs im Heimnetz.",
+    "No public indexer. Use Fulcrum or Electrs on the LAN.",
+  ],
+  [
+    "hw.utxo.plugin",
+    "Electrum-Plugin antwortet nicht. APK deinstallieren und neu sideloaden.",
+    "Electrum plugin did not answer. Uninstall the APK and sideload again.",
+  ],
+  [
+    "hw.utxo.loopback",
+    "127.0.0.1 ist das Telefon, nicht Fulcrum. LAN-IP der Box eintragen.",
+    "127.0.0.1 is the phone, not Fulcrum. Enter the box LAN IP.",
+  ],
+];
+const I18N_LEDGER = [
+  [
     "hw.err.quiet",
     "Ledger antwortet nicht. Bitcoin-App offen, Ledger Live zu, Kabel direkt ins Telefon.",
     "Ledger did not answer. Bitcoin app open, Ledger Live closed, cable straight into the phone.",
-    "hw.err.hid",
-  );
-  out = upsertI18n(
-    out,
+  ],
+  [
     "hw.waitLedger",
     "USB erlauben. Die App spricht danach den Ledger an. Bitcoin-App offen, Ledger Live zu.",
     "Allow USB. The app then talks to the Ledger. Bitcoin app open, Ledger Live closed.",
-    "hw.err.hid",
-  );
-  const node = [
-    [
-      "node.err.blockedPhone",
-      "Node nicht erreichbar. LAN-IP der Core eintragen (nicht 127.0.0.1). StartOS: .local und Root-CA auf dem Telefon.",
-      "Node unreachable. Enter the Core LAN IP (not 127.0.0.1). StartOS: .local address and root CA on the phone.",
-    ],
-    [
-      "node.err.phoneNoBridge",
-      "Direktverbindung ohne Brücke fehlgeschlagen.",
-      "Direct connection without a bridge failed.",
-    ],
-  ];
-  for (const [key, de, en] of node) {
-    out = upsertI18n(out, key, de, en, "node.err.blocked");
+  ],
+];
+const I18N_NODE = [
+  [
+    "node.err.blockedPhone",
+    "Node nicht erreichbar. LAN-IP der Core eintragen (nicht 127.0.0.1). StartOS: .local und Root-CA auf dem Telefon.",
+    "Node unreachable. Enter the Core LAN IP (not 127.0.0.1). StartOS: .local address and root CA on the phone.",
+  ],
+  [
+    "node.err.phoneNoBridge",
+    "Direktverbindung ohne Brücke fehlgeschlagen.",
+    "Direct connection without a bridge failed.",
+  ],
+];
+
+function patchI18n(src) {
+  let out = src;
+  for (const [key, de, en] of I18N_HW) out = upsertI18n(out, key, de, en, "hw.utxo.needElectrum");
+  for (const [key, de, en] of I18N_LEDGER) out = upsertI18n(out, key, de, en, "hw.err.hid");
+  for (const [key, de, en] of I18N_NODE) out = upsertI18n(out, key, de, en, "node.err.blocked");
+  return out;
+}
+
+/** Every Android i18n entry must be present in both the de and the en table. */
+function i18nNeedles() {
+  const out = [];
+  for (const [key, de, en] of [...I18N_HW, ...I18N_LEDGER, ...I18N_NODE]) {
+    out.push(`  "${key}": "${de}",`, `  "${key}": "${en}",`);
   }
   return out;
 }
@@ -640,12 +645,32 @@ try {
   const ver = bumpAndroidVersion(versionName, shaChanged);
   writeFileSync(join(root, ".web-upstream"), `${webSha}\n${WEB_REF}\n`);
 
-  assertContains(rpcPath, ["nativeRpcAvailable", "nativeElectrumDeriveLookup", "nativeElectrumPing"]);
+  // Every patch above is insert-if-anchor-found; a changed anchor in startos makes it a
+  // silent no-op. These asserts turn that into a failed sync (nothing gets committed).
+  assertContains(rpcPath, [
+    "nativeRpcAvailable",
+    "nativeElectrumDeriveLookup",
+    "nativeElectrumPing",
+    "nativeElectrumTip",
+    "function classifyFetchError",
+    "throw classifyFetchError(err)",
+  ]);
   assertContains(join(root, "src/lib/tx/psbt.ts"), ["nativeExpandSpots"]);
+  assertContains(elPath, ["export function nativeIndexerHostAllowed", "export function formatElectrumVersion"]);
   assertContains(join(root, "src/store/bitcoind.ts"), ["skipNodeBridge"]);
-  assertContains(join(root, "src/lib/hw/types.ts"), ["hasWebHid()"]);
-  assertContains(join(root, "src/lib/hw/ledger.ts"), ["installNativeUsbPolyfill"]);
-  assertContains(join(root, "src/lib/hw/bitbox.ts"), ["installNativeUsbPolyfill"]);
+  assertContains(join(root, "src/lib/hw/types.ts"), ["hasWebHid()", 'from "../platform.ts"']);
+  assertContains(join(root, "src/lib/hw/ledger.ts"), [
+    'import { installNativeUsbPolyfill } from "./native-usb.ts"',
+    "await installNativeUsbPolyfill()",
+    "async function openLedgerSessionInner(): Promise<HwSession>",
+    "withTimeout(openLedgerSessionInner(), 45000)",
+  ]);
+  assertContains(join(root, "src/lib/hw/bitbox.ts"), [
+    'import { installNativeUsbPolyfill } from "./native-usb.ts"',
+    "await installNativeUsbPolyfill()",
+  ]);
+  assertContains(diag, ["nativeRpcAvailable"]);
+  assertContains(i18n, i18nNeedles());
   for (const rel of ["src/lib/hw/usb-util.ts", "src/lib/hw/usb-polyfill.ts", "src/lib/bitcoind/native-http.ts"]) {
     if (!existsSync(join(root, rel))) throw new Error(`[sync] overlay missing after restore: ${rel}`);
   }
