@@ -1,0 +1,222 @@
+name: Release APK
+
+# Runs after "Sync from web" (a GITHUB_TOKEN push does not fire `push` workflows,
+# so workflow_run is the hook) and on demand. Builds, signs and releases only when
+# the versionName/versionCode in android/app/build.gradle has no release yet.
+on:
+  workflow_run:
+    workflows: ["Sync from web"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + verify only (workflow artifact), no GitHub release, no Zapstore"
+        type: boolean
+        default: false
+      zapstore_only:
+        description: "Skip the build; publish the APK of the existing release for the current version to Zapstore"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-apk
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  ZSP_VERSION: "0.4.17"
+  BUILD_TOOLS: "34.0.0"
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # workflow_run: newest main, i.e. including the sync commit.
+          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.ref }}
+
+      - name: Decide version and tag
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+          ZAPSTORE_ONLY: ${{ inputs.zapstore_only || false }}
+        run: |
+          set -euo pipefail
+          gradle=android/app/build.gradle
+          name=$(grep -oE 'versionName "[^"]+"' "$gradle" | head -1 | cut -d'"' -f2)
+          code=$(grep -oE 'versionCode [0-9]+' "$gradle" | head -1 | awk '{print $2}')
+          if [ -z "$name" ] || [ -z "$code" ]; then echo "::error::versionName/versionCode not found"; exit 1; fi
+          asset="Scriptwerk-${name}-code${code}.apk"
+          exists() { gh release view "$1" >/dev/null 2>&1; }
+          # A release "carries" this versionCode if one of its assets is named ...-code<N>.apk or ...-code<N>-*.apk
+          carries() { gh release view "$1" --json assets -q '.assets[].name' 2>/dev/null | grep -qE -- "-code${code}[.-]"; }
+
+          build=false; release=false; zap=false; tag=""
+          if [ "$ZAPSTORE_ONLY" = "true" ]; then
+            for t in "v${name}-code${code}" "v${name}"; do
+              if exists "$t" && gh release view "$t" --json assets -q '.assets[].name' | grep -qx -- "$asset"; then tag=$t; break; fi
+            done
+            [ -n "$tag" ] || { echo "::error::no release with asset $asset to publish"; exit 1; }
+            zap=true
+          elif [ "$DRY_RUN" = "true" ]; then
+            build=true
+          elif ! exists "v${name}"; then
+            tag="v${name}"; build=true; release=true; zap=true
+          elif carries "v${name}"; then
+            echo "v${name} already carries versionCode ${code} — nothing to release"
+          elif exists "v${name}-code${code}"; then
+            echo "v${name}-code${code} already exists — nothing to release"
+          else
+            tag="v${name}-code${code}"; build=true; release=true; zap=true
+          fi
+          if [ "$release" = "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ] && [ "${{ github.event_name }}" != "workflow_run" ]; then
+            echo "::error::releases only from main (ref is $GITHUB_REF); use dry_run on branches"; exit 1
+          fi
+          {
+            echo "name=$name"; echo "code=$code"; echo "asset=$asset"; echo "tag=$tag"
+            echo "build=$build"; echo "release=$release"; echo "zapstore=$zap"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $name ($code) tag='${tag}' build=$build release=$release zapstore=$zap"
+
+      - name: Check signing secrets
+        if: steps.ver.outputs.build == 'true'
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$KS" ] || missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -n "$KS_PASS" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          if [ -n "$missing" ]; then echo "::error::missing repo secrets:$missing"; exit 1; fi
+
+      - uses: actions/setup-node@v7
+        if: steps.ver.outputs.build == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-java@v6
+        if: steps.ver.outputs.build == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v4
+        if: steps.ver.outputs.build == 'true'
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+
+      - name: Decode keystore
+        if: steps.ver.outputs.build == 'true'
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          ks="$RUNNER_TEMP/scriptwerk-release.jks"
+          printf '%s' "$KS" | base64 -d > "$ks"
+          chmod 600 "$ks"
+          echo "ANDROID_KEYSTORE_FILE=$ks" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        if: steps.ver.outputs.build == 'true'
+        run: npm ci
+
+      - name: Build signed release APK
+        if: steps.ver.outputs.build == 'true'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: npm run build:apk -- --release
+
+      - name: Verify APK
+        if: steps.ver.outputs.build == 'true'
+        id: verify
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk="artifacts/release/${{ steps.ver.outputs.asset }}"
+          [ -f "$apk" ] || { echo "::error::$apk not found"; ls -la artifacts/release || true; exit 1; }
+          bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          "$bt/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apksigner.txt"
+          badging=$("$bt/aapt" dump badging "$apk" | head -1)
+          echo "$badging"
+          echo "$badging" | grep -q "name='app.scriptwerk.android'" || { echo "::error::wrong package"; exit 1; }
+          echo "$badging" | grep -q "versionCode='${{ steps.ver.outputs.code }}'" || { echo "::error::versionCode mismatch"; exit 1; }
+          echo "$badging" | grep -q "versionName='${{ steps.ver.outputs.name }}'" || { echo "::error::versionName mismatch"; exit 1; }
+          cert=$(grep -m1 'certificate SHA-256 digest' "$RUNNER_TEMP/apksigner.txt" | awk '{print $NF}')
+          if [ -n "${EXPECTED_CERT_SHA256:-}" ]; then
+            want=$(echo "$EXPECTED_CERT_SHA256" | tr -d ': ' | tr 'A-F' 'a-f')
+            [ "$cert" = "$want" ] || { echo "::error::signing cert $cert != expected $want"; exit 1; }
+          fi
+          echo "cert=$cert" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$apk" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.ver.outputs.build == 'true'
+        with:
+          name: ${{ steps.ver.outputs.asset }}
+          path: artifacts/release/${{ steps.ver.outputs.asset }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: steps.ver.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          web=$(head -n1 .web-upstream | cut -c1-7)
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          Web ${{ steps.ver.outputs.name }} from [scriptwerk-startos](https://github.com/kwadde-cmyk/scriptwerk-startos/commit/$(head -n1 .web-upstream)) (\`${web}\`). versionCode ${{ steps.ver.outputs.code }}.
+
+          Signed release APK (built by CI from \`${GITHUB_SHA::7}\`).
+
+          - APK SHA-256: \`${{ steps.verify.outputs.sha256 }}\`
+          - Signing certificate SHA-256: \`${{ steps.verify.outputs.cert }}\`
+          NOTES
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "artifacts/release/${{ steps.ver.outputs.asset }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.ver.outputs.name }} (code ${{ steps.ver.outputs.code }})" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Fetch APK from existing release
+        if: steps.ver.outputs.zapstore == 'true' && steps.ver.outputs.build != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts/release
+          gh release download "${{ steps.ver.outputs.tag }}" -p "${{ steps.ver.outputs.asset }}" -D artifacts/release
+
+      - name: Install zsp
+        if: steps.ver.outputs.zapstore == 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/zsp" \
+            "https://github.com/zapstore/zsp/releases/download/v${ZSP_VERSION}/zsp-${ZSP_VERSION}-linux-amd64"
+          chmod +x "$RUNNER_TEMP/zsp"
+          "$RUNNER_TEMP/zsp" --version
+
+      - name: Publish to Zapstore
+        if: steps.ver.outputs.zapstore == 'true'
+        env:
+          SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$SIGN_WITH" ] || { echo "::error::missing repo secret ZAPSTORE_SIGN_WITH"; exit 1; }
+          ls -la artifacts/release
+          # --quiet: no prompts (implies -y); certificate linking is a one-time local step.
+          "$RUNNER_TEMP/zsp" publish --quiet zapstore.yaml

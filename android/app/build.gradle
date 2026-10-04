@@ -1,5 +1,23 @@
 apply plugin: 'com.android.application'
 
+// Release signing: env vars (CI) win, then ../keystore.properties (local, gitignored).
+// Nothing set -> release stays unsigned and debug builds are untouched.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('../keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def signingValue = { String envName, String propName ->
+    def v = System.getenv(envName)
+    if (v == null || v.trim().isEmpty()) v = keystoreProps.getProperty(propName)
+    return (v == null || v.trim().isEmpty()) ? null : v.trim()
+}
+def releaseStoreFile = signingValue('ANDROID_KEYSTORE_FILE', 'storeFile')
+def releaseStorePassword = signingValue('ANDROID_KEYSTORE_PASSWORD', 'storePassword')
+def releaseKeyAlias = signingValue('ANDROID_KEY_ALIAS', 'keyAlias') ?: 'scriptwerk'
+def releaseKeyPassword = signingValue('ANDROID_KEY_PASSWORD', 'keyPassword') ?: releaseStorePassword
+def hasReleaseSigning = releaseStoreFile != null && releaseStorePassword != null && file(releaseStoreFile).exists()
+
 android {
     namespace "app.scriptwerk.android"
     compileSdk rootProject.ext.compileSdkVersion
@@ -16,8 +34,21 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
