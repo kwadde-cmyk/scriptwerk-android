@@ -532,6 +532,73 @@ function mergePackage(webPkg, androidPkg) {
   };
 }
 
+const DEP_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+
+/** Android-only packages that startos does not carry. */
+function androidOnlyDep(name) {
+  return name.startsWith("@capacitor/");
+}
+
+/** startos deps that are missing or pinned differently in the merged android package.json. */
+function webDepMismatches(webPkg, pkg) {
+  const out = [];
+  for (const field of ["dependencies", "devDependencies"]) {
+    for (const [name, range] of Object.entries(webPkg[field] || {})) {
+      if (androidOnlyDep(name)) continue;
+      const have = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+      if (have === undefined) out.push(`${field} ${name}@${range}: missing`);
+      else if (have !== range) out.push(`${field} ${name}: startos ${range}, android ${have}`);
+    }
+  }
+  return out;
+}
+
+/** Differences between package.json and the root entry of package-lock.json (what `npm ci` rejects). */
+function lockMismatches(pkg, lock) {
+  const rootEntry = lock?.packages?.[""] ?? {};
+  const out = [];
+  for (const field of DEP_FIELDS) {
+    const want = pkg[field] || {};
+    const have = rootEntry[field] || {};
+    for (const name of new Set([...Object.keys(want), ...Object.keys(have)])) {
+      if (want[name] === have[name]) continue;
+      if (have[name] === undefined) out.push(`${field} ${name}@${want[name]}: not in lock`);
+      else if (want[name] === undefined) out.push(`${field} ${name}: in lock only (${have[name]})`);
+      else out.push(`${field} ${name}: package.json ${want[name]}, lock ${have[name]}`);
+    }
+  }
+  return out;
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/**
+ * package.json follows startos on every sync, the lock did not — `npm ci` then fails in CI.
+ * Re-resolve only what changed (`--package-lock-only` keeps existing pins) and fail loudly
+ * if the lock still disagrees. SYNC_LOCK=0 turns the re-resolve off (check only).
+ */
+function syncLockfile() {
+  const pkgPath = join(root, "package.json");
+  const lockPath = join(root, "package-lock.json");
+  let diff = existsSync(lockPath) ? lockMismatches(readJson(pkgPath), readJson(lockPath)) : ["package-lock.json missing"];
+  if (!diff.length) return;
+  console.log(`[sync] package-lock.json out of date:\n  ${diff.join("\n  ")}`);
+  if (process.env.SYNC_LOCK === "0") {
+    throw new Error("[sync] package-lock.json does not match package.json (run: npm install --package-lock-only)");
+  }
+  console.log("[sync] npm install --package-lock-only");
+  execFileSync("npm", ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  diff = lockMismatches(readJson(pkgPath), readJson(lockPath));
+  if (diff.length) {
+    throw new Error(`[sync] package-lock.json still differs from package.json:\n  ${diff.join("\n  ")}`);
+  }
+}
+
 function readPrevSha() {
   const p = join(root, ".web-upstream");
   if (!existsSync(p)) return "";
@@ -576,6 +643,7 @@ try {
   const shaChanged = webSha !== prevSha;
   if (!shaChanged && !FORCE) {
     console.log(`[sync] already at web ${webSha.slice(0, 7)} — nothing to do`);
+    syncLockfile();
     process.exit(0);
   }
 
@@ -636,7 +704,13 @@ try {
 
   const webPkg = JSON.parse(readFileSync(join(tmp, "package.json"), "utf8"));
   const androidPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  writeFileSync(join(root, "package.json"), `${JSON.stringify(mergePackage(webPkg, androidPkg), null, 2)}\n`);
+  const mergedPkg = mergePackage(webPkg, androidPkg);
+  writeFileSync(join(root, "package.json"), `${JSON.stringify(mergedPkg, null, 2)}\n`);
+  const depDiff = webDepMismatches(webPkg, mergedPkg);
+  if (depDiff.length) {
+    throw new Error(`[sync] package.json lost startos deps (Capacitor excluded):\n  ${depDiff.join("\n  ")}`);
+  }
+  syncLockfile();
   if (existsSync(join(tmp, "tsconfig.json"))) {
     copyFileSync(join(tmp, "tsconfig.json"), join(root, "tsconfig.json"));
   }
