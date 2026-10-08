@@ -1,3 +1,23 @@
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("hw.err.quiet")), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+export async function openLedgerSession(): Promise<HwSession> {
+  return await withTimeout(openLedgerSessionInner(), 45000);
+}
+
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
 import { withPartialSigs } from "@/lib/tx/psbt";
 import { ledgerPolicyReady } from "@/lib/miniscript/bip388";
@@ -71,26 +91,6 @@ async function openTransport(TransportWebHID: TransportCtor) {
     await picked.close().catch(() => undefined);
     return claim();
   }
-}
-
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("hw.err.quiet")), ms);
-    work.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
-
-export async function openLedgerSession(): Promise<HwSession> {
-  return await withTimeout(openLedgerSessionInner(), 45000);
 }
 
 async function openLedgerSessionInner(): Promise<HwSession> {
