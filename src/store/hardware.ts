@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
+import { isDefaultWpkh } from "@/lib/miniscript/bip388";
 import { policyCacheKey, isHmacHex } from "@/lib/hw/address-check";
 import {
   defaultAccountPath,
@@ -194,7 +195,7 @@ export const useHardware = create<HardwareState>((set, get) => ({
     try {
       const result = await session.registerPolicy(policy);
       const hmac = result.hmac ?? "";
-      if (session.kind === "ledger" && !isHmacHex(hmac)) throw new Error("hw.err.needHmac");
+      if (session.kind === "ledger" && !isHmacHex(hmac) && !isDefaultWpkh(policy.template)) throw new Error("hw.err.needHmac");
       set({ status: "ready", lastHmac: hmac || null, policyHmacKey: key, error: null });
       return hmac || "ok";
     } catch (err) {

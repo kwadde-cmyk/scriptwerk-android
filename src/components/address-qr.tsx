@@ -19,11 +19,14 @@ export function AddressLine({
   label,
   className,
   textClassName,
+  fill = false,
 }: {
   address: string;
   label?: string;
   className?: string;
   textClassName?: string;
+  /** Stretch to the column and pin copy and QR to the right edge. */
+  fill?: boolean;
 }) {
   const { t } = useT();
   const [open, setOpen] = useState(false);
@@ -32,14 +35,27 @@ export function AddressLine({
   const title = label?.trim() || t("addr.title");
 
   return (
-    <span className={cn("inline-flex max-w-full min-w-0 items-start gap-0.5", className)}>
+    <span className={cn(fill ? "flex w-full min-w-0 items-center gap-0.5" : "inline-flex max-w-full min-w-0 items-start gap-0.5", className)}>
       <button
         type="button"
-        className={cn("min-w-0 text-left font-mono break-all hover:text-fg", textClassName ?? "text-2xs text-fg")}
+        className={cn(
+          "min-w-0 text-left font-mono hover:text-fg",
+          fill ? "flex flex-1 items-baseline" : "",
+          textClassName ?? "text-2xs text-fg",
+        )}
         title={t("addr.openQr")}
         onClick={() => setOpen(true)}
       >
-        {shortenAddress(text)}
+        {fill && text.length > 8 ? (
+          <>
+            <span className="min-w-0 truncate">{text.slice(0, -6)}</span>
+            <span className="shrink-0">{text.slice(-6)}</span>
+          </>
+        ) : fill ? (
+          <span className="truncate">{text}</span>
+        ) : (
+          shortenAddress(text)
+        )}
       </button>
       <CopyButton value={text} label={t("addr.copy")} className="size-9" />
       <Tip label={t("addr.openQr")}>

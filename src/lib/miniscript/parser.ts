@@ -24,7 +24,7 @@ const FRAGMENTS = new Set([
 export interface ParseResult {
   node: MsNode;
   rest?: string;
-  wrapper: "none" | "wsh" | "sh_wsh" | "tr";
+  wrapper: "none" | "wsh" | "sh_wsh" | "wpkh" | "tr";
   checksum?: string;
   rawInner: string;
 }
@@ -44,8 +44,22 @@ export function parseAny(input: string): ParseResult {
     body = src.slice(0, hash);
   }
 
+  if (checksum && !descsumCheck(`${body}#${checksum}`)) {
+    throw new Error("import.err.checksum");
+  }
+
   let wrapper: ParseResult["wrapper"] = "none";
   let inner = body;
+  if (/^wpkh\(/i.test(inner) && inner.endsWith(")")) {
+    const key = inner.slice(inner.indexOf("(") + 1, -1);
+    if (!key) throw new Error("wpkh braucht einen Key.");
+    return {
+      node: { id: uid(), kind: "pk", key },
+      wrapper: "wpkh",
+      checksum,
+      rawInner: `pk(${key})`,
+    };
+  }
   if (inner.startsWith("wsh(") && inner.endsWith(")")) {
     wrapper = "wsh";
     inner = inner.slice(4, -1);
@@ -54,10 +68,6 @@ export function parseAny(input: string): ParseResult {
     inner = inner.slice(7, -2);
   } else if (inner.startsWith("tr(") || inner.startsWith("musig(")) {
     throw new Error("import.err.taproot");
-  }
-
-  if (checksum && !descsumCheck(`${body}#${checksum}`)) {
-    throw new Error("import.err.checksum");
   }
 
   const node = parseExpression(inner, 0).node;
@@ -76,10 +86,10 @@ function extractFromBsms(s: string): string | null {
   const t = s.trim();
   if (!t.toUpperCase().startsWith("BSMS")) return null;
   const parts = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const desc = parts.find((l) => l.startsWith("wsh(") || l.startsWith("sh(") || l.startsWith("tr("));
+  const desc = parts.find((l) => /^(wsh|sh|tr|wpkh)\(/i.test(l));
   if (desc) return desc;
   const compact = t.replace(/\s+/g, "");
-  const idx = compact.search(/wsh\(|sh\(|tr\(/);
+  const idx = compact.search(/wsh\(|sh\(|tr\(|wpkh\(/i);
   if (idx >= 0) return compact.slice(idx);
   throw new Error("BSMS ohne Descriptor-Zeile.");
 }

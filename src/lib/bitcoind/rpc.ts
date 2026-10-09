@@ -1,5 +1,6 @@
 import { checksumOf, coreCanonicalBody, stripChecksum } from "../miniscript/checksum.ts";
 import { rewriteSortedMultiForCore } from "../miniscript/compile.ts";
+import { hostIsLocal } from "../electrum.ts";
 import {
   clampUtxoCount,
   descriptorForBranch,
@@ -115,16 +116,17 @@ export function isLanIpUrl(url: string): boolean {
   }
 }
 
-export function addressSpace(url: string): "local" | "loopback" {
+export function addressSpace(url: string): "local" | "loopback" | "public" {
   try {
     const host = new URL(/^https?:\/\//i.test(url) ? url : `http://${url}`).hostname;
     if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1") {
       return "loopback";
     }
+    if (hostIsLocal(host)) return "local";
   } catch {
-    /* ignore */
+    return "public";
   }
-  return "local";
+  return "public";
 }
 
 export async function nodeFetch(url: string, init: RequestInit): Promise<Response> {
@@ -137,6 +139,7 @@ export async function nodeFetch(url: string, init: RequestInit): Promise<Respons
     }
   }
   const space = addressSpace(url);
+  if (space === "public") return await fetch(url, init);
   const opts = { ...init, targetAddressSpace: space } as RequestInit;
   try {
     return await fetch(url, opts);

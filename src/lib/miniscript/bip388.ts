@@ -1,6 +1,6 @@
 import type { MsNode } from "./ast.ts";
 import { collectKeys, hasHoles } from "./ast.ts";
-import { compileMiniscript, expandAliasKeys, rewriteSortedMultiForCore } from "./compile.ts";
+import { compileMiniscript, expandAliasKeys, rewriteSortedMultiForCore, wrapDescriptor } from "./compile.ts";
 import {
   emptyKey,
   extractKeysFromTree,
@@ -183,7 +183,7 @@ export function compileBip388(
     ok: true,
     policy: {
       name: policyName,
-      template: `wsh(${inner})`,
+      template: wrapDescriptor(inner),
       keys: policyKeys,
     },
     warnings,
@@ -233,8 +233,13 @@ export function formatLedgerJson(policy: Bip388Policy): string {
   )}\n`;
 }
 
+export function isDefaultWpkh(template: string): boolean {
+  return /^wpkh\(@0\/\*\*\)$/i.test(template.replace(/\s+/g, ""));
+}
+
 export function toLedgerTemplate(template: string): string {
   const raw = template.replace(/#[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{8}$/i, "").trim();
+  if (/^wpkh\(/i.test(raw.replace(/\s+/g, ""))) return raw.replace(/\s+/g, "");
   const rewritten = rewriteSortedMultiForCore(raw);
   const wrap = rewritten.match(/^wsh\((.*)\)\s*$/is);
   let inner = wrap ? wrap[1]! : rewritten;
@@ -285,6 +290,10 @@ export function ledgerPolicyReady(policy: Bip388Policy): { ok: true; policy: Bip
   const missing = prepared.keys.filter((k) => !k.origin || !k.xpub);
   if (missing.length) {
     return { ok: false, error: "hw.err.needKeys" };
+  }
+  if (isDefaultWpkh(prepared.template)) {
+    if (prepared.keys.length !== 1) return { ok: false, error: "hw.err.needKeys" };
+    return { ok: true, policy: prepared };
   }
   if (!prepared.template.startsWith("wsh(")) {
     return { ok: false, error: "hw.err.template" };
@@ -513,14 +522,14 @@ function parseTextPolicy(text: string): Bip388Policy | null {
   if (!lines.length) return null;
   const joined = lines.join("\n");
   if (!/@\d+/.test(joined)) return null;
-  const templateLine = lines.find((l) => /^(wsh|sh)\(/i.test(l.replace(/\s+/g, "")));
+  const templateLine = lines.find((l) => /^(wsh|sh|wpkh)\(/i.test(l.replace(/\s+/g, "")));
   if (!templateLine) return null;
   const template = templateLine.replace(/\s+/g, "");
   const nameLine = lines.find(
     (l) =>
       /^(name|wallet)\s*[:=]/i.test(l) ||
       /^BIP388\s+\S/.test(l) ||
-      (!XPUB_RE.test(l) && !/^(wsh|sh)\(/i.test(l) && !/^@\d+/.test(l) && l.length < 65),
+      (!XPUB_RE.test(l) && !/^(wsh|sh|wpkh)\(/i.test(l) && !/^@\d+/.test(l) && l.length < 65),
   );
   let name = "Scriptwerk";
   if (nameLine) {

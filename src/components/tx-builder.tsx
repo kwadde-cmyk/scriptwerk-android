@@ -9,7 +9,7 @@ import { checksumOf } from "@/lib/miniscript/checksum";
 import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
 import { describeStageSlots, type Stage } from "@/lib/miniscript/stages";
 import { lockWhen } from "@/lib/miniscript/keys";
-import { compiledForStudio } from "@/lib/miniscript/policy-mode";
+import { compiledForStudio, isWpkhDescriptor } from "@/lib/miniscript/policy-mode";
 import { broadcastRawTx } from "@/lib/bitcoind/rpc";
 import { compileBip388 } from "@/lib/miniscript/bip388";
 import { useBitcoind } from "@/store/bitcoind";
@@ -47,6 +47,7 @@ export function TxTab() {
   const [signed, setSigned] = useState("");
   const signedRef = useRef("");
   const syncRef = useRef<(merged: string) => void>(() => {});
+  const clearRef = useRef<() => void>(() => {});
   const pathIndex = slots.length <= 1 ? 0 : path;
 
   function takeSignature(next: string): { merged: string; gained: boolean } {
@@ -62,6 +63,12 @@ export function TxTab() {
       gained = merged !== prev;
     }
     return { merged, gained };
+  }
+
+  function discard() {
+    signedRef.current = "";
+    setSigned("");
+    clearRef.current();
   }
 
   return (
@@ -89,13 +96,13 @@ export function TxTab() {
       </div>
       <Step n="1" title={mode === "send" ? t("tx.stepBuild") : t("tx.recovery")}>
         {mode === "send" ? (
-          <SendPane pathIndex={pathIndex} syncRef={syncRef} takeSignature={takeSignature} />
+          <SendPane pathIndex={pathIndex} syncRef={syncRef} clearRef={clearRef} takeSignature={takeSignature} />
         ) : (
-          <RecoveryPane pathIndex={pathIndex} syncRef={syncRef} takeSignature={takeSignature} />
+          <RecoveryPane pathIndex={pathIndex} syncRef={syncRef} clearRef={clearRef} takeSignature={takeSignature} />
         )}
       </Step>
       <Step n="2" title={t("tx.stepSign")}>
-        <SignPane pathIndex={pathIndex} signed={signed} takeSignature={takeSignature} />
+        <SignPane pathIndex={pathIndex} signed={signed} takeSignature={takeSignature} onDiscard={discard} />
       </Step>
       <Step n="3" title={t("tx.stepSend")}>
         <BroadcastPane signed={signed} />
@@ -107,10 +114,12 @@ export function TxTab() {
 function SendPane({
   pathIndex,
   syncRef,
+  clearRef,
   takeSignature,
 }: {
   pathIndex: number | null;
   syncRef: { current: (merged: string) => void };
+  clearRef: { current: () => void };
   takeSignature: (next: string) => { merged: string; gained: boolean };
 }) {
   const { t, locale } = useT();
@@ -141,6 +150,10 @@ function SendPane({
   const [error, setError] = useState<string | null>(null);
   syncRef.current = (merged) => {
     setPsbt((cur) => (cur && samePsbtTransaction(cur, merged) ? mergePsbtSignatures(cur, merged) : cur));
+  };
+  clearRef.current = () => {
+    setPsbt("");
+    setError(null);
   };
 
   const selected = coins.filter((c) => picked.includes(`${c.txid}:${c.vout}`));
@@ -374,10 +387,12 @@ function SendPane({
 function RecoveryPane({
   pathIndex,
   syncRef,
+  clearRef,
   takeSignature,
 }: {
   pathIndex: number | null;
   syncRef: { current: (merged: string) => void };
+  clearRef: { current: () => void };
   takeSignature: (next: string) => { merged: string; gained: boolean };
 }) {
   const { t, locale } = useT();
@@ -399,6 +414,10 @@ function RecoveryPane({
     setBuilt((cur) =>
       cur.map((b) => (b.psbt && samePsbtTransaction(b.psbt, merged) ? { ...b, psbt: mergePsbtSignatures(b.psbt, merged) } : b)),
     );
+  };
+  clearRef.current = () => {
+    setBuilt([]);
+    setError(null);
   };
 
   const rows = useMemo(() => {
@@ -509,10 +528,12 @@ function SignPane({
   pathIndex,
   signed,
   takeSignature,
+  onDiscard,
 }: {
   pathIndex: number | null;
   signed: string;
   takeSignature: (next: string) => { merged: string; gained: boolean };
+  onDiscard: () => void;
 }) {
   const { t, locale } = useT();
   const [importQr, setImportQr] = useState(false);
@@ -541,6 +562,22 @@ function SignPane({
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" disabled={!ready} onClick={() => downloadPsbt(signed, "scriptwerk-send.psbt")}>{t("tx.psbt")}</Button>
           <Button type="button" variant="outline" disabled={!ready} onClick={() => setExportQr((v) => !v)}>{t("tx.exportQr")}</Button>
+          <Tip label={t("tx.discard")}>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label={t("tx.discard")}
+              disabled={!ready}
+              onClick={() => {
+                setExportQr(false);
+                setError(null);
+                onDiscard();
+              }}
+            >
+              <Trash2 />
+            </Button>
+          </Tip>
         </div>
         {exportQr && ready ? <QrPreview value={signed} label={t("tx.exportQr")} compact /> : null}
       </div>
@@ -845,7 +882,7 @@ async function walletMeta(descriptor: string, list: WatchAddr[], inputs: string[
   spots.forEach((spot, i) => {
     const item = expanded[i];
     const expected = list.find((a) => (a.kind === "change" ? 1 : 0) === spot.change && a.index === spot.index);
-    if (!item?.witnessScript || !item.derivations?.length || item.address !== expected?.address) throw new Error("tx.err.script");
+    if ((!item?.witnessScript && !isWpkhDescriptor(descriptor)) || !item?.derivations?.length || item.address !== expected?.address) throw new Error("tx.err.script");
     by.set(`${spot.change}:${spot.index}`, item);
   });
   const resolved = ids.map((id) => (id ? by.get(id) ?? null : null));

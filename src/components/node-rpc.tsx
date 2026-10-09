@@ -38,6 +38,22 @@ import {
   setUseHostProxy,
 } from "@/lib/bitcoind/rpc";
 import { descriptorForBranch } from "@/lib/hw/address-check";
+import { hostIsLocal, parseElectrumUrl } from "@/lib/electrum";
+
+function remoteServer(raw: string, kind: "rpc" | "electrum"): boolean {
+  const text = raw.trim();
+  if (!text) return false;
+  if (kind === "electrum") {
+    const target = parseElectrumUrl(text);
+    return Boolean(target && !hostIsLocal(target.host));
+  }
+  try {
+    const url = /^https?:\/\//i.test(text) ? text : `http://${text}`;
+    return !hostIsLocal(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
 
 export function NodeButton() {
   const { t } = useT();
@@ -279,6 +295,9 @@ function NodeDialogBody() {
           <p className="mt-1 text-2xs text-fg-subtle">
             {startos ? t("node.startos.portHint") : t("node.portHint", { port })}
           </p>
+          {remoteServer(url, "rpc") ? (
+            <p className="mt-1 text-2xs text-pretty text-warn">{t("node.remoteTrust")}</p>
+          ) : null}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -342,6 +361,9 @@ function NodeDialogBody() {
                 : t("node.electrumDocker")
               : t("node.electrumHint")}
           </p>
+          {remoteServer(electrum, "electrum") ? (
+            <p className="mt-1 text-2xs text-pretty text-warn">{t("node.remoteTrust")}</p>
+          ) : null}
         </div>
         {ipWarn ? <p className="text-2xs text-pretty text-warn">{t("node.startos.ipWarn")}</p> : null}
 

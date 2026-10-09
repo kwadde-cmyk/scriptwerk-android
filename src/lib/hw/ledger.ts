@@ -20,7 +20,7 @@ export async function openLedgerSession(): Promise<HwSession> {
 
 import type { Bip388Policy } from "@/lib/miniscript/bip388";
 import { withPartialSigs } from "@/lib/tx/psbt";
-import { ledgerPolicyReady } from "@/lib/miniscript/bip388";
+import { ledgerPolicyReady, isDefaultWpkh } from "@/lib/miniscript/bip388";
 import { alignLedgerOrigin, isHmacHex, policyCacheKey } from "./address-check.ts";
 import { formatOrigin, hwErrorMessage, normalizeHwPath, pathToDerivation, type HwSession } from "./types.ts";
 import { installNativeUsbPolyfill } from "./native-usb.ts";
@@ -97,7 +97,7 @@ async function openLedgerSessionInner(): Promise<HwSession> {
   await ensureBuffer();
   await installNativeUsbPolyfill();
   const { default: TransportWebHID } = await import("@ledgerhq/hw-transport-webhid");
-  const { AppClient, WalletPolicy } = await import("ledger-bitcoin");
+  const { AppClient, DefaultWalletPolicy, WalletPolicy } = await import("ledger-bitcoin");
   const transport = await openTransport(TransportWebHID as unknown as TransportCtor);
   const app = new AppClient(transport as never);
   let info: { name: string; version: string } | null = null;
@@ -122,10 +122,17 @@ async function openLedgerSessionInner(): Promise<HwSession> {
   function walletPolicyOf(policy: Bip388Policy) {
     const ready = ledgerPolicyReady(policy);
     if (!ready.ok) throw new Error(ready.error);
-    const name = ready.policy.name.slice(0, 16);
     const keys = ready.policy.keys.map((k) => alignLedgerOrigin(k.origin, fingerprint, coin));
     if (keys.some((o) => !o)) throw new Error("hw.err.needKeys");
+    if (isDefaultWpkh(ready.policy.template)) return new DefaultWalletPolicy("wpkh(@0/**)", keys[0]!);
+    const name = ready.policy.name.slice(0, 16);
     return new WalletPolicy(name, ready.policy.template, keys);
+  }
+
+  function hmacBuffer(policy: Bip388Policy, hex: string): Buffer | null {
+    if (isDefaultWpkh(policy.template)) return null;
+    if (!isHmacHex(hex)) throw new Error("hw.err.needHmac");
+    return Buffer.from(hex, "hex");
   }
 
   let bound: { key: string; wp: InstanceType<typeof WalletPolicy>; hmacHex: string } | null = null;
@@ -161,6 +168,7 @@ async function openLedgerSessionInner(): Promise<HwSession> {
     },
     async registerPolicy(policy: Bip388Policy) {
       try {
+        if (isDefaultWpkh(policy.template)) return {};
         const hmac = await registerWp(policy);
         return { hmac };
       } catch (err) {
@@ -177,20 +185,23 @@ async function openLedgerSessionInner(): Promise<HwSession> {
             : isHmacHex(hmac)
               ? hmac
               : "";
-        if (!isHmacHex(hex)) throw new Error("hw.err.needHmac");
-        try {
-          return await app.getWalletAddress(wp, Buffer.from(hex, "hex"), change, index, display);
-        } catch (err) {
-          if (!isFileNotFound(err)) throw err;
-          const hmacHex = await registerWp(policy);
-          return await app.getWalletAddress(
-            bound!.wp,
-            Buffer.from(hmacHex, "hex"),
-            change,
-            index,
-            display,
-          );
+        const hmacBuf = hmacBuffer(policy, hex);
+        if (!isDefaultWpkh(policy.template)) {
+          try {
+            return await app.getWalletAddress(wp, hmacBuf, change, index, display);
+          } catch (err) {
+            if (!isFileNotFound(err)) throw err;
+            const hmacHex = await registerWp(policy);
+            return await app.getWalletAddress(
+              bound!.wp,
+              Buffer.from(hmacHex, "hex"),
+              change,
+              index,
+              display,
+            );
+          }
         }
+        return await app.getWalletAddress(wp, null, change, index, display);
       } catch (err) {
         if (isFileNotFound(err)) throw new Error("hw.err.6a82addr");
         throw new Error(hwErrorMessage(err));
@@ -212,8 +223,10 @@ async function openLedgerSessionInner(): Promise<HwSession> {
             ? bound.hmacHex
             : isHmacHex(hmac)
               ? hmac
-              : await registerWp(policy);
-        const sigs = await app.signPsbt(psbt, wp, Buffer.from(hex, "hex"));
+              : isDefaultWpkh(policy.template)
+                ? ""
+                : await registerWp(policy);
+        const sigs = await app.signPsbt(psbt, wp, hmacBuffer(policy, hex));
         return withPartialSigs(
           psbt,
           sigs.map(([input, sig]) => ({

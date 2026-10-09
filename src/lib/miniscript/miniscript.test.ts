@@ -10,7 +10,7 @@ import {
 } from "./compile.ts";
 import { explainPolicy } from "./explain.ts";
 import { decodeLibrary, encodeLibrary, peekChecksum, policyIsDirty, policySig, type SavedPolicy } from "../policy-library.ts";
-import { electrumHostAllowed, parseElectrumUrl, scriptPubKeyFromAddress, scripthashForAddress } from "../electrum.ts";
+import { electrumHostAllowed, hostIsLocal, parseElectrumUrl, scriptPubKeyFromAddress, scripthashForAddress } from "../electrum.ts";
 import {
   applyKeyMaterial,
   attachChildOrReplace,
@@ -1020,6 +1020,28 @@ describe("bip388", () => {
     assert.match(desc, /<0;1>\/\*/);
   });
 
+  it("compiles one key and no timelock to wpkh", () => {
+    const { root } = compileStages([{ id: "s1", delay: 0, k: 1, keys: ["A"] }]);
+    const compiled = compileDescriptor(root, [{ ...emptyKey("A"), xpub: XPUB, fingerprint: "deadbeef" }]);
+    assert.equal(compiled.ok, true);
+    assert.match(compiled.descriptor, /^wpkh\(\[deadbeef\/48'\/0'\/0'\/2'\]/);
+    assert.match(compiled.descriptor, /\/<0;1>\/\*/);
+    assert.equal(compiled.descriptor.includes("wsh("), false);
+    assert.equal(descsumCheck(compiled.descriptor), true);
+    const hashed = compileDescriptor(
+      compileStages([{ id: "s1", delay: 0, k: 1, keys: ["A"], hash: true }]).root,
+      [],
+    );
+    assert.match(hashed.descriptor, /^wpkh\(A\)#/);
+    const locked = compileDescriptor(
+      compileStages([{ id: "s1", delay: 144, k: 1, keys: ["A"] }]).root,
+      [],
+    );
+    assert.match(locked.descriptor, /^wsh\(and_v\(/);
+    const policy = compileBip388(root, [{ ...emptyKey("A"), xpub: XPUB, fingerprint: "deadbeef" }]);
+    assert.equal(policy.policy.template, "wpkh(@0/**)");
+  });
+
   it("parses sortedmulti as multi with sorted flag", () => {
     const { node } = parseAny("wsh(sortedmulti(2,A,B,C))");
     assert.equal(node.kind, "multi");
@@ -1482,8 +1504,13 @@ describe("electrum helpers", () => {
     });
     assert.equal(parseElectrumUrl("ssl://node.local:50002")?.tls, true);
     assert.equal(electrumHostAllowed("192.168.178.55"), true);
-    assert.equal(electrumHostAllowed("8.8.8.8"), false);
-    assert.equal(electrumHostAllowed("electrs.local"), true);
+    assert.equal(electrumHostAllowed("8.8.8.8"), true);
+    assert.equal(electrumHostAllowed("electrum.blockstream.info"), true);
+    assert.equal(electrumHostAllowed(""), false);
+    assert.equal(hostIsLocal("192.168.178.55"), true);
+    assert.equal(hostIsLocal("8.8.8.8"), false);
+    assert.equal(hostIsLocal("electrs.local"), true);
+    assert.equal(hostIsLocal("electrum.blockstream.info"), false);
   });
 });
 
@@ -1514,6 +1541,21 @@ describe("imported policy mode", () => {
     assert.equal(hit.mode, "stages");
     assert.equal(hit.stages.length, 2);
     assert.equal(hit.originalDescriptor, "");
+  });
+
+  it("keeps an imported wsh(pk) and opens an imported wpkh as stages", () => {
+    const frozen = classify("wsh(pk(A))");
+    assert.equal(frozen.mode, "display");
+    assert.match(frozen.originalDescriptor, /^wsh\(pk\(A\)\)#/);
+    const live = classify("wpkh(A)");
+    assert.equal(live.mode, "stages");
+    assert.equal(live.stages.length, 1);
+    assert.equal(live.stages[0]?.k, 1);
+    assert.deepEqual(live.stages[0]?.keys, ["A"]);
+    assert.equal(live.originalDescriptor, "");
+    const parsed = parseAny(descsumCreate(`wpkh([deadbeef/84'/0'/0']${XPUB}/<0;1>/*)`));
+    assert.equal(parsed.wrapper, "wpkh");
+    assert.equal(parsed.node.kind, "pk");
   });
 
   it("freezes or_d as display when Scriptwerk would emit or_i", () => {

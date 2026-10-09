@@ -435,6 +435,10 @@ function CoinRow({
               {spendLabel}
             </Badge>
           </div>
+          <div className="flex min-h-6 items-center gap-1">
+            <p className="min-w-0 flex-1 truncate">{label}</p>
+            <LabelEdit type="output" refValue={`${hit.txid}:${hit.vout}`} current={label} />
+          </div>
           {status.paths.length ? (
             <div className="flex flex-wrap gap-1">
               {status.paths.map((p) => (
@@ -476,24 +480,22 @@ function CoinRow({
             {kind ? ` · ${t(`wallet.${kind}`)}${index != null ? ` ${index}` : ""}` : ""}
           </p>
           {addr ? (
-            <div className="space-y-0.5">
-              <AddressLine
-                address={addr}
-                label={label || (kind ? `${t(`wallet.${kind}`)} ${index ?? ""}`.trim() : undefined)}
-                textClassName="text-2xs text-fg"
-              />
-              {label ? <p className="font-sans text-2xs text-fg-muted">{label}</p> : null}
-            </div>
-          ) : label ? (
-            <p className="font-sans text-2xs text-fg-muted">{label}</p>
+            <AddressLine
+              fill
+              address={addr}
+              label={label || (kind ? `${t(`wallet.${kind}`)} ${index ?? ""}`.trim() : undefined)}
+              textClassName="text-2xs text-fg"
+            />
           ) : null}
-          <p className="font-mono text-2xs break-all text-fg-subtle">
-            {shortId(hit.txid)}:{hit.vout}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-0.5">
-          <LabelEdit type="output" refValue={`${hit.txid}:${hit.vout}`} current={label} />
-          <CopyButton value={`${hit.txid}:${hit.vout}`} />
+          <div className="flex w-full min-w-0 items-center gap-0.5">
+            <p className="flex min-w-0 flex-1 font-mono text-2xs text-fg-subtle">
+              <span className="truncate">{hit.txid.slice(0, -6)}</span>
+              <span className="shrink-0">
+                {hit.txid.slice(-6)}:{hit.vout}
+              </span>
+            </p>
+            <CopyButton value={`${hit.txid}:${hit.vout}`} className="size-9" />
+          </div>
         </div>
       </div>
     </li>
@@ -522,8 +524,7 @@ function AddrRow({
   const { t } = useT();
   return (
     <li className="rounded-md border border-border px-2 py-1.5">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
+      <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-2xs text-fg-muted">
               {kind} {index}
@@ -535,25 +536,28 @@ function AddrRow({
             ) : (
               <Badge variant="default">—</Badge>
             )}
-            {label ? <span className="text-2xs text-fg">{label}</span> : null}
           </div>
-          <p className="mt-0.5">
-            <AddressLine address={address} label={`${kind} ${index}`} textClassName="text-2xs text-fg" />
-          </p>
+          <div className="flex min-h-6 items-center gap-1">
+            <p className="min-w-0 flex-1 truncate">{label}</p>
+            <LabelEdit type="addr" refValue={address} current={label} />
+          </div>
+          <AddressLine fill address={address} label={`${kind} ${index}`} textClassName="text-2xs text-fg" />
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <LabelEdit type="addr" refValue={address} current={label} />
-        </div>
-      </div>
       {coins.length ? (
         <ul className="mt-1.5 space-y-0.5 border-t border-border pt-1.5">
           {coins.map((u) => {
             const conf = u.height > 0 && height > 0 ? Math.max(0, height - u.height + 1) : 0;
             return (
-              <li key={`${u.txid}:${u.vout}`} className="flex flex-wrap items-center gap-x-2 font-mono text-2xs text-fg-muted">
+              <li key={`${u.txid}:${u.vout}`} className="flex items-center gap-2 text-2xs text-fg-muted">
                 <AmountText btc={u.amount} />
-                <span>{conf ? `${conf} conf` : t("wallet.unconf")}</span>
-                <span className="break-all">{shortId(u.txid)}</span>
+                <span className="shrink-0">{conf ? `${conf} conf` : t("wallet.unconf")}</span>
+                <span className="flex min-w-0 flex-1 font-mono">
+                  <span className="truncate">{u.txid.slice(0, -6)}</span>
+                  <span className="shrink-0">
+                    {u.txid.slice(-6)}:{u.vout}
+                  </span>
+                </span>
+                <CopyButton value={`${u.txid}:${u.vout}`} className="size-9" />
               </li>
             );
           })}
@@ -628,10 +632,4 @@ function LabelEdit({
       />
     </form>
   );
-}
-
-function shortId(v: string): string {
-  const s = v.trim();
-  if (s.length <= 20) return s;
-  return `${s.slice(0, 8)}…${s.slice(-6)}`;
 }

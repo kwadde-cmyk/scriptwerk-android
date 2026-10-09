@@ -114,7 +114,8 @@ export function parseElectrumUrl(raw: string): ElectrumTarget | null {
   return { host, port, tls: port === 50002 };
 }
 
-export function electrumHostAllowed(host: string, envUrl = ""): boolean {
+/** Loopback, mDNS, or a private LAN address. Public hosts are allowed; the dialog warns. */
+export function hostIsLocal(host: string): boolean {
   const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (!h) return false;
   if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
@@ -122,8 +123,13 @@ export function electrumHostAllowed(host: string, envUrl = ""): boolean {
   if (/^10(?:\.\d{1,3}){3}$/.test(h)) return true;
   if (/^192\.168(?:\.\d{1,3}){2}$/.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/.test(h)) return true;
-  const env = parseElectrumUrl(envUrl);
-  return Boolean(env && env.host.toLowerCase() === h);
+  return false;
+}
+
+/** Any host the parser accepted. Remote servers are a trust choice, not a block. */
+export function electrumHostAllowed(host: string, _envUrl = ""): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return Boolean(h) && !/[\s/\\]/.test(h);
 }
 
 export function isLoopbackHost(host: string): boolean {

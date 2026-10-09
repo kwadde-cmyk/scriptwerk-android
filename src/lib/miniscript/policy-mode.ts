@@ -32,7 +32,10 @@ export function rejectTaproot(text: string): string | null {
 
 export function sourceFromParse(p: ParseResult): string {
   let body = p.rawInner;
-  if (p.wrapper === "wsh") body = `wsh(${p.rawInner})`;
+  if (p.wrapper === "wpkh") {
+    const key = p.rawInner.match(/^(?:pkh|pk)\((.*)\)$/)?.[1] ?? p.rawInner;
+    body = `wpkh(${key})`;
+  } else if (p.wrapper === "wsh") body = `wsh(${p.rawInner})`;
   else if (p.wrapper === "sh_wsh") body = `sh(wsh(${p.rawInner}))`;
   return p.checksum ? `${body}#${p.checksum}` : body;
 }
@@ -41,8 +44,13 @@ export function ensureDescriptor(src: string): string {
   const compact = src.replace(/\s+/g, "");
   if (!compact) return "";
   let body = stripChecksum(compact);
+  if (/^wpkh\(/i.test(body)) return descsumCreate(body);
   if (!/^(wsh|sh)\(/i.test(body)) body = `wsh(${body})`;
   return descsumCreate(body);
+}
+
+export function isWpkhDescriptor(src: string): boolean {
+  return /^wpkh\(/i.test(stripChecksum(src.replace(/\s+/g, "")));
 }
 
 export function descriptorsEquivalent(a: string, b: string): boolean {
@@ -56,6 +64,8 @@ export function miniscriptInner(desc: string): string {
   if (sh) return sh[1]!;
   const wsh = body.match(/^wsh\((.*)\)\s*$/i);
   if (wsh) return wsh[1]!;
+  const wpkh = body.match(/^wpkh\((.*)\)\s*$/i);
+  if (wpkh) return `pk(${wpkh[1]})`;
   return body;
 }
 

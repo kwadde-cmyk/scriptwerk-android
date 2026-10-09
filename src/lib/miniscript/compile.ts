@@ -124,6 +124,16 @@ export function formatKeyExpr(k: KeyEntry): string {
   return `[${fp}/${path}]${raw}/${tail}`;
 }
 
+/**
+ * A lone pk() or pkh() is native SegWit singlesig. Every other policy stays wsh().
+ * An imported wsh(pk(…)) is a different address and is not rewritten.
+ */
+export function wrapDescriptor(inner: string): string {
+  const bare = inner.match(/^(?:pkh|pk)\(([^()]+)\)$/);
+  if (bare) return `wpkh(${bare[1]})`;
+  return `wsh(${inner})`;
+}
+
 export function compileDescriptor(
   node: MsNode,
   keys: KeyEntry[],
@@ -139,8 +149,8 @@ export function compileDescriptor(
   }
   const tree = reuse ? aliasReuseKeys(node) : node;
   const miniscript = compileMiniscript(tree);
-  const inner = rewriteSortedMultiForCore(substituteKeys(miniscript, expandAliasKeys(tree, keys, reuse)), node);
-  const descriptor = descsumCreate(`wsh(${inner})`);
+  const inner = rewriteSortedMultiForCore(substituteKeys(miniscript, expandAliasKeys(tree, keys, reuse)), tree);
+  const descriptor = descsumCreate(wrapDescriptor(inner));
   return { ok: true, miniscript, descriptor };
 }
 

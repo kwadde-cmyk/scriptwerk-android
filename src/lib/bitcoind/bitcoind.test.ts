@@ -33,6 +33,7 @@ describe("bitcoind rpc helpers", () => {
     assert.equal(defaultRpcPort(), 8332);
     assert.equal(addressSpace("https://192.168.1.80:57521"), "local");
     assert.equal(addressSpace("http://127.0.0.1:8332"), "loopback");
+    assert.equal(addressSpace("https://bitcoin.example.com:8332"), "public");
     assert.equal(looksLikeStartos("https://192.168.1.80:57521"), true);
     assert.equal(looksLikeStartos("https://abc.local:57521"), true);
     assert.equal(isLanIpUrl("https://192.168.1.80:57521"), true);
