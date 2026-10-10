@@ -213,12 +213,40 @@ jobs:
 
       - name: Publish to Zapstore
         if: steps.ver.outputs.zapstore == 'true'
+        timeout-minutes: 10
         env:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          ZSP_BUNKER_CLIENT_KEY: ${{ secrets.ZSP_BUNKER_CLIENT_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           [ -n "$SIGN_WITH" ] || { echo "::error::missing repo secret ZAPSTORE_SIGN_WITH"; exit 1; }
+          if [[ "$SIGN_WITH" == bunker://* ]]; then
+            # zsp keys NIP-46 permissions by its client key, stored at
+            # $XDG_CONFIG_HOME/zsp/bunker-keys/<bunker pubkey>.key (64 hex chars).
+            # A fresh runner would generate a new key every run, which Amber rejects
+            # ("no permission") once the single-use bunker secret has been consumed.
+            [ -n "${ZSP_BUNKER_CLIENT_KEY:-}" ] || { echo "::error::missing repo secret ZSP_BUNKER_CLIENT_KEY (required for bunker:// signing; generate once with: openssl rand -hex 32)"; exit 1; }
+            client_key="$(printf '%s' "$ZSP_BUNKER_CLIENT_KEY" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+            [[ "$client_key" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::ZSP_BUNKER_CLIENT_KEY must be exactly 64 hex characters"; exit 1; }
+            bunker_pk="${SIGN_WITH#bunker://}"
+            bunker_pk="${bunker_pk%%\?*}"
+            bunker_pk="${bunker_pk%%/*}"
+            [[ "$bunker_pk" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::ZAPSTORE_SIGN_WITH: bunker URL has no valid 64-hex remote-signer pubkey"; exit 1; }
+            export XDG_CONFIG_HOME="$RUNNER_TEMP/cfg"
+            key_dir="$XDG_CONFIG_HOME/zsp/bunker-keys"
+            mkdir -p "$key_dir"
+            chmod 700 "$XDG_CONFIG_HOME/zsp" "$key_dir"
+            ( umask 077; printf '%s\n' "$client_key" > "$key_dir/$bunker_pk.key" )
+            chmod 600 "$key_dir/$bunker_pk.key"
+            unset client_key
+            echo "Using persisted NIP-46 client key for bunker ${bunker_pk:0:8}..."
+          fi
           ls -la artifacts/release
-          # --quiet: no prompts (implies -y); certificate linking is a one-time local step.
-          "$RUNNER_TEMP/zsp" publish --quiet zapstore.yaml
+          # --quiet: no prompts (implies -y; -y alone stays interactive); --verbose: debug output.
+          rc=0
+          timeout 300 "$RUNNER_TEMP/zsp" publish --quiet --verbose zapstore.yaml || rc=$?
+          if [ "$rc" -eq 124 ]; then
+            echo "::error::Bunker did not answer within 5 min – is Amber running?"
+          fi
+          exit "$rc"
