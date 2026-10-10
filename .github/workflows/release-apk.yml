@@ -213,7 +213,7 @@ jobs:
 
       - name: Publish to Zapstore
         if: steps.ver.outputs.zapstore == 'true'
-        timeout-minutes: 10
+        timeout-minutes: 15
         env:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           ZSP_BUNKER_CLIENT_KEY: ${{ secrets.ZSP_BUNKER_CLIENT_KEY }}
@@ -244,9 +244,20 @@ jobs:
           fi
           ls -la artifacts/release
           # --quiet: no prompts (implies -y; -y alone stays interactive); --verbose: debug output.
-          rc=0
-          timeout 300 "$RUNNER_TEMP/zsp" publish --quiet --verbose zapstore.yaml || rc=$?
+          # Stream zsp output to the log and keep a copy to classify a timeout.
+          # zsp --verbose prints no secrets (signer pubkey prefix only).
+          zsp_log="$RUNNER_TEMP/zsp-publish.log"
+          set +e
+          timeout 600 "$RUNNER_TEMP/zsp" publish --quiet --verbose zapstore.yaml 2>&1 | tee "$zsp_log"
+          rc=${PIPESTATUS[0]}
+          set -e
           if [ "$rc" -eq 124 ]; then
-            echo "::error::Bunker did not answer within 5 min – is Amber running?"
+            if grep -q 'relay\.zapstore\.dev' "$zsp_log" && grep -qiE 'FAILED|failed to connect' "$zsp_log"; then
+              echo "::error::Zapstore relay unreachable – retry later with zapstore_only=true"
+            elif ! grep -q 'Signer type' "$zsp_log" || grep -qiE 'bunker.*(error|fail)|(error|fail).*bunker' "$zsp_log"; then
+              echo "::error::Bunker did not answer within 10 min – is Amber running?"
+            else
+              echo "::error::zsp timed out after 10 min (see log)"
+            fi
           fi
           exit "$rc"
