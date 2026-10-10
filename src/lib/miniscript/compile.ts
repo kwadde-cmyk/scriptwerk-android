@@ -2,7 +2,8 @@ import type { KeyEntry } from "./keys.ts";
 import { accountPathFrom, childForAccount, reuseBranchPath } from "./keys.ts";
 import type { MsNode } from "./ast.ts";
 import { collectKeys, hasHoles } from "./ast.ts";
-import { descsumCreate, CHILD_PATH_FORMS, rewriteDescriptorChildPath } from "./checksum.ts";
+import { deriveAddressesLocal } from "../bitcoind/derive-local.ts";
+import { descsumCreate, CHILD_PATH_FORMS, coreCanonicalBody, rewriteDescriptorChildPath } from "./checksum.ts";
 import { compileStages, aliasReuseKeys, stageKeyOrderVariants, type Nesting, type Stage } from "./stages.ts";
 
 export function compileMiniscript(node: MsNode, compact = true): string {
@@ -194,10 +195,21 @@ export function rewriteSortedMultiForCore(text: string, root?: MsNode): string {
   return wrap ? `${wrap[1]!.toLowerCase()}(${next})` : next;
 }
 
+/** Nunchuk writes this when the descriptor already contains the receive and change paths. */
 export function compileBsms(descriptor: string, firstAddress?: string): string {
-  const lines = ["BSMS 1.0", descriptor, "/0/*,/1/*"];
-  if (firstAddress) lines.push(firstAddress);
+  const body = descriptor.trim();
+  const lines = ["BSMS 1.0", body, "No path restrictions"];
+  const addr = (firstAddress ?? firstReceiveAddress(body))?.trim();
+  if (addr) lines.push(addr);
   return lines.join("\n");
+}
+
+function firstReceiveAddress(descriptor: string): string | undefined {
+  try {
+    return deriveAddressesLocal(coreCanonicalBody(descriptor), 0, 0)[0];
+  } catch {
+    return undefined;
+  }
 }
 
 export function descriptorOrderVariants(

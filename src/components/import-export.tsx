@@ -82,7 +82,7 @@ export function ImportExportBar() {
     download("scriptwerk.keys.txt", formatKeyList(keys));
     download("scriptwerk.miniscript.txt", formatExportWithKeys(compiled.miniscript, keys));
     download("scriptwerk.descriptor.txt", formatExportWithKeys(compiled.descriptor, keys));
-    download("scriptwerk.bsms", `${compileBsms(compiled.descriptor)}\n${formatExportWithKeys("", keys).trim()}`);
+    download("scriptwerk.bsms", `${compileBsms(compiled.descriptor)}\n`);
     download(
       "scriptwerk.json",
       formatScriptwerkJson({

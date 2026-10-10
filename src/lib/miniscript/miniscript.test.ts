@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { BIP32 } from "@bitcoinerlab/descriptors";
 import { checksumOf, coreCanonicalBody, descsumCheck, descsumCreate, rewriteDescriptorChildPath, stripChecksum } from "./checksum.ts";
 import { descriptorChecksums, highlightScript, peekScript } from "./highlight.ts";
 import {
+  compileBsms,
   compileDescriptor,
   compileMiniscript,
   descriptorOrderVariants,
@@ -115,9 +117,21 @@ describe("parser", () => {
     assert.equal(descsumCheck(desc), true);
   });
 
+  it("exports BSMS the way Nunchuk reads it", () => {
+    const x1 = BIP32.fromSeed(new Uint8Array(64).fill(1)).derivePath("m/48'/0'/0'/2'").neutered().toBase58();
+    const x2 = BIP32.fromSeed(new Uint8Array(64).fill(2)).derivePath("m/48'/0'/0'/2'").neutered().toBase58();
+    const desc = descsumCreate(
+      `wsh(sortedmulti(2,[aaaaaaaa/48'/0'/0'/2']${x1}/<0;1>/*,[bbbbbbbb/48'/0'/0'/2']${x2}/<0;1>/*))`,
+    );
+    const lines = compileBsms(desc).split("\n");
+    assert.deepEqual(lines.slice(0, 3), ["BSMS 1.0", desc, "No path restrictions"]);
+    assert.equal(lines[3], "bc1qry6xx4ps38sjan0kmuwa3vy50fn9jxy7ply4a5dws2zth255046q4whvpn");
+    assert.equal(parseAny(compileBsms(desc)).wrapper, "wsh");
+  });
+
   it("reads BSMS with newlines", () => {
     const desc = descsumCreate("wsh(pk(A))");
-    const bsms = `BSMS 1.0\n${desc}\n/0/*,/1/*`;
+    const bsms = `BSMS 1.0\n${desc}\nNo path restrictions`;
     const parsed = parseAny(bsms);
     assert.equal(parsed.node.kind, "pk");
   });
