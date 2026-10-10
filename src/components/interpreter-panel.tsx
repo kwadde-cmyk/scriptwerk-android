@@ -1,4 +1,4 @@
-import { compileBsms, descriptorOrderVariants } from "@/lib/miniscript/compile";
+import { bsmsRecord, descriptorOrderVariants } from "@/lib/miniscript/compile";
 import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
 import { descriptorChecksums, peekScript } from "@/lib/miniscript/highlight";
 import { stageOrderCount } from "@/lib/miniscript/stages";
@@ -116,7 +116,7 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
             <OrderVariants />
             <ScriptPeek title="Miniscript" value={ms} />
             <ScriptPeek title="Descriptor (wsh)" value={descriptorText} />
-            <ScriptPeek title="BSMS" value={compiled?.ok ? compileBsms(compiled.descriptor) : ""} />
+            <ScriptPeek title="BSMS" value={compiled?.ok ? bsmsRecord(compiled.descriptor) : ""} />
           </div>
         </ScrollArea>
       </TabsContent>

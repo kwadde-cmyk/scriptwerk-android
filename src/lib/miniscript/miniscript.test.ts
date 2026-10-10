@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { BIP32 } from "@bitcoinerlab/descriptors";
 import { checksumOf, coreCanonicalBody, descsumCheck, descsumCreate, rewriteDescriptorChildPath, stripChecksum } from "./checksum.ts";
 import { descriptorChecksums, highlightScript, peekScript } from "./highlight.ts";
 import {
-  compileBsms,
   compileDescriptor,
   compileMiniscript,
+  bsmsRecord,
   descriptorOrderVariants,
   expandAliasKeys,
 } from "./compile.ts";
@@ -49,6 +48,8 @@ import {
 } from "./keys.ts";
 import { visit } from "./ast.ts";
 import { parseAny } from "./parser.ts";
+import { BIP32 } from "@bitcoinerlab/descriptors";
+import { deriveAddressesLocal } from "../bitcoind/derive-local.ts";
 import { compileStages, delayPresets, describeStageSlots, inferNesting, inferStages, liftIncompleteReason, nextStageDelay, permutations, slotsForAccount, sortedMultiAllowed, stageFormula, stageHighlightIds, stageIndicesForAccount } from "./stages.ts";
 import { confirmationsAt, coinHeightFromConfirms, evaluateSpendPaths, oldestCoinHeight, youngestCoinHeight } from "./spend-check.ts";
 import { evaluateCoinStatus } from "./coin-status.ts";
@@ -117,23 +118,28 @@ describe("parser", () => {
     assert.equal(descsumCheck(desc), true);
   });
 
-  it("exports BSMS the way Nunchuk reads it", () => {
+  it("reads BSMS with newlines", () => {
+    const desc = descsumCreate("wsh(pk(A))");
+    const bsms = `BSMS 1.0\n${desc}\nNo path restrictions\nbc1qexample`;
+    const parsed = parseAny(bsms);
+    assert.equal(parsed.node.kind, "pk");
+    const legacy = parseAny(`BSMS 1.0\n${desc}\n/0/*,/1/*`);
+    assert.equal(legacy.node.kind, "pk");
+  });
+
+  it("writes a Nunchuk BSMS record: path in the descriptor, no restrictions, first receive address", () => {
     const x1 = BIP32.fromSeed(new Uint8Array(64).fill(1)).derivePath("m/48'/0'/0'/2'").neutered().toBase58();
     const x2 = BIP32.fromSeed(new Uint8Array(64).fill(2)).derivePath("m/48'/0'/0'/2'").neutered().toBase58();
     const desc = descsumCreate(
       `wsh(sortedmulti(2,[aaaaaaaa/48'/0'/0'/2']${x1}/<0;1>/*,[bbbbbbbb/48'/0'/0'/2']${x2}/<0;1>/*))`,
     );
-    const lines = compileBsms(desc).split("\n");
-    assert.deepEqual(lines.slice(0, 3), ["BSMS 1.0", desc, "No path restrictions"]);
-    assert.equal(lines[3], "bc1qry6xx4ps38sjan0kmuwa3vy50fn9jxy7ply4a5dws2zth255046q4whvpn");
-    assert.equal(parseAny(compileBsms(desc)).wrapper, "wsh");
-  });
-
-  it("reads BSMS with newlines", () => {
-    const desc = descsumCreate("wsh(pk(A))");
-    const bsms = `BSMS 1.0\n${desc}\nNo path restrictions`;
-    const parsed = parseAny(bsms);
-    assert.equal(parsed.node.kind, "pk");
+    const record = bsmsRecord(desc);
+    const lines = record.split("\n");
+    const receive = deriveAddressesLocal(rewriteDescriptorChildPath(desc, "0/*"), 0, 0)[0];
+    assert.deepEqual(lines, ["BSMS 1.0", desc, "No path restrictions", receive]);
+    assert.match(receive ?? "", /^bc1q/);
+    assert.equal(record.includes("Scriptwerk-keys"), false);
+    assert.equal(parseAny(record).node.kind, "multi");
   });
 });
 
@@ -952,12 +958,16 @@ describe("bip388", () => {
       keys,
       reuseKeys: false,
       network: "mainnet",
-      labels: { "addr:bc1qaa": { type: "addr", ref: "bc1qaa", label: "Rent" } },
+      labels: {
+        "addr:bc1qaa": { type: "addr", ref: "bc1qaa", label: "Rent" },
+        "output:aa:0": { type: "output", ref: "aa:0", label: "That coin" },
+      },
     });
     const bundle = parseScriptwerkBundle(json);
     assert.equal(bundle?.keys[0]?.note, "Alice");
     assert.equal(bundle?.keys[1]?.note, "Bob");
     assert.equal(bundle?.labels?.["addr:bc1qaa"]?.label, "Rent");
+    assert.equal(bundle?.labels?.["output:aa:0"]?.label, "That coin");
   });
 
   it("keeps child accounts on the same fingerprint instead of new letters", () => {

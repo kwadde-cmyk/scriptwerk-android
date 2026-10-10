@@ -2,8 +2,8 @@ import type { KeyEntry } from "./keys.ts";
 import { accountPathFrom, childForAccount, reuseBranchPath } from "./keys.ts";
 import type { MsNode } from "./ast.ts";
 import { collectKeys, hasHoles } from "./ast.ts";
+import { descsumCreate, CHILD_PATH_FORMS, rewriteDescriptorChildPath, stripChecksum } from "./checksum.ts";
 import { deriveAddressesLocal } from "../bitcoind/derive-local.ts";
-import { descsumCreate, CHILD_PATH_FORMS, coreCanonicalBody, rewriteDescriptorChildPath } from "./checksum.ts";
 import { compileStages, aliasReuseKeys, stageKeyOrderVariants, type Nesting, type Stage } from "./stages.ts";
 
 export function compileMiniscript(node: MsNode, compact = true): string {
@@ -195,21 +195,30 @@ export function rewriteSortedMultiForCore(text: string, root?: MsNode): string {
   return wrap ? `${wrap[1]!.toLowerCase()}(${next})` : next;
 }
 
-/** Nunchuk writes this when the descriptor already contains the receive and change paths. */
+/** BIP-129 record, Nunchuk order: descriptor (path inside), then "No path restrictions", then the first receive address. */
 export function compileBsms(descriptor: string, firstAddress?: string): string {
-  const body = descriptor.trim();
-  const lines = ["BSMS 1.0", body, "No path restrictions"];
-  const addr = (firstAddress ?? firstReceiveAddress(body))?.trim();
+  const lines = ["BSMS 1.0", descriptor.trim(), "No path restrictions"];
+  const addr = firstAddress?.trim();
   if (addr) lines.push(addr);
   return lines.join("\n");
 }
 
-function firstReceiveAddress(descriptor: string): string | undefined {
+/** Receive branch Nunchuk derives the BSMS address from (`EXTERNAL_ALL`, index 0). */
+function bsmsReceiveDescriptor(descriptor: string): string {
+  const body = stripChecksum(descriptor);
+  if (/\/<\d+;\d+>\//.test(body)) return rewriteDescriptorChildPath(descriptor, "0/*");
+  if (body.includes("/**")) return descsumCreate(body.replace(/\/\*\*/g, "/0/*"));
+  return descriptor;
+}
+
+export function bsmsRecord(descriptor: string): string {
+  let first = "";
   try {
-    return deriveAddressesLocal(coreCanonicalBody(descriptor), 0, 0)[0];
+    first = deriveAddressesLocal(bsmsReceiveDescriptor(descriptor), 0, 0)[0] ?? "";
   } catch {
-    return undefined;
+    first = "";
   }
+  return compileBsms(descriptor, first);
 }
 
 export function descriptorOrderVariants(

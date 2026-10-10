@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
-import { compileBsms } from "@/lib/miniscript/compile";
+import { bsmsRecord } from "@/lib/miniscript/compile";
 import { compiledForStudio, policyIsFrozen } from "@/lib/miniscript/policy-mode";
-import { formatExportWithKeys, formatKeyList } from "@/lib/miniscript/keys";
-import { compileBip388, formatBitboxJson, formatLedgerJson, formatScriptwerkJson, type Bip388CompileResult } from "@/lib/miniscript/bip388";
-import { buildBip329Export, serializeBip329 } from "@/lib/bip329";
+import { formatKeyList } from "@/lib/miniscript/keys";
+import { compileBip388, formatBitboxJson, formatLedgerJson, formatScriptwerkJson, parseScriptwerkBundle, type Bip388CompileResult } from "@/lib/miniscript/bip388";
+import { buildBip329Export, labelConflicts, parseBip329, serializeBip329, storedFromRecords } from "@/lib/bip329";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { QrPreview, QrScanner, FilePick } from "@/components/qr-io";
+import { LabelConflictDialog } from "@/components/label-conflict";
 import { PolicyLibraryButton } from "@/components/policy-library";
 import { RecoverySheetButton } from "@/components/recovery-sheet";
 import { HardwareButton } from "@/components/hardware-usb";
@@ -47,6 +48,7 @@ export function ImportExportBar() {
   const [open, setOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [pendingImport, setPendingImport] = useState<{ text: string; names: string[]; okKey: string } | null>(null);
   const walletName = useStudio((s) => s.policyName);
   const setWalletName = useStudio((s) => s.setPolicyName);
   const labels = useStudio((s) => s.labels);
@@ -58,7 +60,7 @@ export function ImportExportBar() {
   const frozen = policyIsFrozen(policyMode);
   const miniscript = compiled?.miniscript ?? "";
   const descriptor = compiled?.ok ? compiled.descriptor : "";
-  const bsms = useMemo(() => (descriptor ? compileBsms(descriptor) : ""), [descriptor]);
+  const bsms = useMemo(() => (descriptor ? bsmsRecord(descriptor) : ""), [descriptor]);
   const bip = useMemo(
     () => (!frozen && exportOpen && root ? compileBip388(root, keys, walletName, reuseKeys) : null),
     [frozen, exportOpen, root, keys, walletName, reuseKeys],
@@ -80,11 +82,11 @@ export function ImportExportBar() {
       return;
     }
     download("scriptwerk.keys.txt", formatKeyList(keys));
-    download("scriptwerk.miniscript.txt", formatExportWithKeys(compiled.miniscript, keys));
-    download("scriptwerk.descriptor.txt", formatExportWithKeys(compiled.descriptor, keys));
-    download("scriptwerk.bsms", `${compileBsms(compiled.descriptor)}\n`);
+    download("scriptwerk.miniscript.txt", `${compiled.miniscript}\n`);
+    download("scriptwerk.descriptor.txt", `${compiled.descriptor}\n`);
+    download("scriptwerk.bsms", `${bsmsRecord(compiled.descriptor)}\n`);
     download(
-      "scriptwerk.json",
+      "wallet.json",
       formatScriptwerkJson({
         name: walletName,
         miniscript: compiled.miniscript,
@@ -102,28 +104,54 @@ export function ImportExportBar() {
       buildBip329Export({
         labels,
         origin: compiled.descriptor || undefined,
-        xpubs: keys
-          .filter((k) => k.xpub.trim())
-          .map((k) => ({
-            xpub: k.xpub.trim(),
-            origin:
-              k.fingerprint && k.derivation
-                ? `[${k.fingerprint.replace(/^#/, "")}/${k.derivation.replace(/^m\//, "")}]`
-                : undefined,
-            note: k.note,
-          })),
       }),
     );
     if (labelBody) download("scriptwerk-labels.jsonl", labelBody);
-    if (bip?.ok && !frozen) {
-      download("scriptwerk-ledger.json", formatLedgerJson(bip.policy));
-      download("scriptwerk-bitbox.json", formatBitboxJson(bip.policy));
+    toast.success(t("export.ok"));
+  }
+
+  function labelsIn(text: string) {
+    const bundle = parseScriptwerkBundle(text);
+    if (bundle?.labels && Object.keys(bundle.labels).length) return bundle.labels;
+    return storedFromRecords(parseBip329(text).records);
+  }
+
+  function runImport(text: string, labelsMode?: "overwrite" | "keep", okKey = "import.fileOk") {
+    const incoming = labelsIn(text);
+    const conflicts = labelConflicts(useStudio.getState().labels, incoming);
+    if (conflicts.length && !labelsMode) {
+      setPendingImport({
+        text,
+        okKey,
+        names: conflicts.map((c) => c.current || c.incoming).filter(Boolean).slice(0, 8),
+      });
+      return;
     }
-    toast.success(bip?.ok && !frozen ? t("export.okDevices") : t("export.ok"));
+    importText(text, labelsMode);
+    const err = useStudio.getState().importError;
+    if (!err) {
+      setOpen(false);
+      setPendingImport(null);
+      toast.success(t(okKey));
+    }
   }
 
   const onQrRead = useCallback(
     (text: string) => {
+      const bundle = parseScriptwerkBundle(text);
+      const labels =
+        bundle?.labels && Object.keys(bundle.labels).length
+          ? bundle.labels
+          : storedFromRecords(parseBip329(text).records);
+      const conflicts = labelConflicts(useStudio.getState().labels, labels);
+      if (conflicts.length) {
+        setPendingImport({
+          text,
+          okKey: "import.qrOk",
+          names: conflicts.map((c) => c.current || c.incoming).filter(Boolean).slice(0, 8),
+        });
+        return;
+      }
       importText(text);
       const err = useStudio.getState().importError;
       if (!err) {
@@ -167,12 +195,7 @@ export function ImportExportBar() {
               <FilePick
                 onRead={(text) => {
                   setDraft(text);
-                  importText(text);
-                  const err = useStudio.getState().importError;
-                  if (!err) {
-                    setOpen(false);
-                    toast.success(t("import.fileOk"));
-                  }
+                  runImport(text);
                 }}
               />
               {importError ? <p className="text-xs text-danger">{importError}</p> : null}
@@ -191,14 +214,7 @@ export function ImportExportBar() {
                   {t("ops.cancel")}
                 </Button>
                 <Button
-                  onClick={() => {
-                    importText(draft);
-                    const err = useStudio.getState().importError;
-                    if (!err) {
-                      setOpen(false);
-                      toast.success(t("import.loaded"));
-                    }
-                  }}
+                  onClick={() => runImport(draft, undefined, "import.loaded")}
                 >
                   {t("import.read")}
                 </Button>
@@ -296,6 +312,13 @@ export function ImportExportBar() {
         </DialogContent>
       </Dialog>
 
+      <LabelConflictDialog
+        names={pendingImport?.names ?? null}
+        onClose={() => setPendingImport(null)}
+        onKeep={() => pendingImport && runImport(pendingImport.text, "keep", pendingImport.okKey)}
+        onOverwrite={() => pendingImport && runImport(pendingImport.text, "overwrite", pendingImport.okKey)}
+      />
+
       <Tip label={t("header.undo")}>
       <Button variant="ghost" size="icon" className="size-9" onClick={undo} disabled={!canUndo} aria-label={t("header.undo")}>
         <Undo2 />
@@ -334,7 +357,6 @@ function DeviceExport({
     return <p className="text-sm text-danger">{result.error}</p>;
   }
   const json = kind === "ledger" ? formatLedgerJson(result.policy) : formatBitboxJson(result.policy);
-  const filename = kind === "ledger" ? "scriptwerk-ledger.json" : "scriptwerk-bitbox.json";
 
   return (
     <div className="space-y-3">
@@ -388,21 +410,6 @@ function DeviceExport({
           }}
         >
           {t("export.copyTemplate")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const blob = new Blob([json], { type: "application/json;charset=utf-8" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          <Download /> {t("export.downloadDevice")}
         </Button>
       </div>
     </div>

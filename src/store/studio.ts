@@ -45,6 +45,7 @@ import {
   storedFromRecords,
   mergeLabels,
   parseBip329,
+  labelConflicts,
   type Bip329Type,
   type StoredLabel,
 } from "@/lib/bip329";
@@ -138,7 +139,10 @@ interface StudioState {
   setPolicyName: (name: string) => void;
   markSaved: (id: string) => void;
   setLabel: (type: Bip329Type, ref: string, label: string) => void;
-  importBip329: (text: string) => { ok: true; n: number } | { ok: false; error: string };
+  importBip329: (
+    text: string,
+    labelsMode?: "overwrite" | "keep",
+  ) => { ok: true; n: number } | { ok: false; error: string } | { ok: "confirm"; names: string[] };
   loadSnapshot: (snap: PolicySnapshot, meta?: { id?: string }) => void;
   select: (id: string | null) => void;
   selectStage: (id: string | null) => void;
@@ -156,7 +160,7 @@ interface StudioState {
   removeKey: (id: string) => void;
   removeUnusedKeys: () => number;
   removeChild: (keyId: string, childId: string) => void;
-  importText: (text: string) => void;
+  importText: (text: string, labelsMode?: "overwrite" | "keep") => void;
   importKeysText: (text: string) => void;
   importKeyText: (id: string, text: string) => string | null;
   importChildText: (id: string, text: string, opts?: { fallbackPath?: string; alias?: string }) => string | null;
@@ -462,12 +466,19 @@ export const useStudio = create<StudioState>()(
         }
         set({ labels });
       },
-      importBip329: (text) => {
+      importBip329: (text, labelsMode) => {
         const parsed = parseBip329(text);
         const incoming = storedFromRecords(parsed.records);
         const n = Object.keys(incoming).length;
         if (!n) return { ok: false as const, error: "wallet.bip329Empty" };
-        set({ labels: mergeLabels(get().labels, incoming) });
+        const conflicts = labelConflicts(get().labels, incoming);
+        if (conflicts.length && !labelsMode) {
+          return {
+            ok: "confirm" as const,
+            names: conflicts.map((c) => c.current || c.incoming).filter(Boolean).slice(0, 8),
+          };
+        }
+        set({ labels: mergeLabels(get().labels, incoming, labelsMode ?? "overwrite") });
         return { ok: true as const, n };
       },
       loadSnapshot: (snap, meta) => {
@@ -679,7 +690,7 @@ export const useStudio = create<StudioState>()(
           }),
         });
       },
-      importText: (text) => {
+      importText: (text, labelsMode) => {
         const dropCoins = () => useBitcoind.getState().setLastWatch(null);
         const blocked = assertImportableText(text);
         if (blocked) {
@@ -729,7 +740,9 @@ export const useStudio = create<StudioState>()(
                 reuseKeys: bundle.reuseKeys ?? get().reuseKeys,
                 savedId: null,
                 cleanSig: "",
-                ...(bundle.labels ? { labels: mergeLabels(get().labels, bundle.labels) } : {}),
+                ...(bundle.labels
+                  ? { labels: mergeLabels(get().labels, bundle.labels, labelsMode ?? "overwrite") }
+                  : {}),
               });
               dropCoins();
               return;
@@ -739,7 +752,9 @@ export const useStudio = create<StudioState>()(
                 preserveGroups: true,
                 reuseKeys: bundle.reuseKeys,
               }),
-              ...(bundle.labels ? { labels: mergeLabels(get().labels, bundle.labels) } : {}),
+              ...(bundle.labels
+                ? { labels: mergeLabels(get().labels, bundle.labels, labelsMode ?? "overwrite") }
+                : {}),
             });
             dropCoins();
           } catch (e) {

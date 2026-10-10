@@ -21,6 +21,7 @@ import { CopyButton } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
 import { AmountInline, AmountText } from "@/components/amount";
 import { FilePick } from "@/components/qr-io";
+import { LabelConflictDialog } from "@/components/label-conflict";
 import { useT } from "@/lib/use-t";
 import { localizeMessage, numberLocale } from "@/lib/i18n";
 import { toast } from "sonner";
@@ -39,7 +40,6 @@ export function WatchWalletPanel() {
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
   const root = useStudio((s) => s.root);
-  const keys = useStudio((s) => s.keys);
   const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const labels = useStudio((s) => s.labels);
   const importBip329 = useStudio((s) => s.importBip329);
@@ -50,6 +50,7 @@ export function WatchWalletPanel() {
   const scanWatch = useBitcoind((s) => s.scanWatch);
   const setOpen = useBitcoind((s) => s.setOpen);
   const canScan = !demo && Boolean(electrum.trim());
+  const [labelAsk, setLabelAsk] = useState<{ text: string; names: string[] } | null>(null);
   const [count, setCount] = useState(20);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<CoinSort>("age");
@@ -159,16 +160,6 @@ export function WatchWalletPanel() {
       origin: descriptor || undefined,
       addresses: snap?.addresses,
       unspents: snap?.unspents,
-      xpubs: keys
-        .filter((k) => k.xpub.trim())
-        .map((k) => ({
-          xpub: k.xpub.trim(),
-          origin:
-            k.fingerprint && k.derivation
-              ? `[${k.fingerprint.replace(/^#/, "")}/${k.derivation.replace(/^m\//, "")}]`
-              : undefined,
-          note: k.note,
-        })),
     });
     if (!records.length) {
       toast.error(t("wallet.bip329None"));
@@ -185,12 +176,17 @@ export function WatchWalletPanel() {
     toast.success(t("wallet.bip329Exported", { n: records.length }));
   }
 
-  function onImportLabels(text: string) {
-    const hit = importBip329(text);
+  function onImportLabels(text: string, mode?: "overwrite" | "keep") {
+    const hit = importBip329(text, mode);
+    if (hit.ok === "confirm") {
+      setLabelAsk({ text, names: hit.names });
+      return;
+    }
     if (!hit.ok) {
       toast.error(t(hit.error));
       return;
     }
+    setLabelAsk(null);
     toast.success(t("wallet.bip329Ok", { n: hit.n }));
   }
 
@@ -198,6 +194,12 @@ export function WatchWalletPanel() {
 
   return (
     <div className="space-y-5">
+      <LabelConflictDialog
+        names={labelAsk?.names ?? null}
+        onClose={() => setLabelAsk(null)}
+        onKeep={() => labelAsk && onImportLabels(labelAsk.text, "keep")}
+        onOverwrite={() => labelAsk && onImportLabels(labelAsk.text, "overwrite")}
+      />
       <p className="text-2xs text-pretty text-fg-muted">{t("wallet.blurb")}</p>
 
       <section className="rounded-lg border border-border bg-surface px-3 py-3">

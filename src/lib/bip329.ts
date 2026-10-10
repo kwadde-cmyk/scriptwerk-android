@@ -172,11 +172,33 @@ export function storedFromRecords(records: Bip329Record[]): Record<string, Store
   return out;
 }
 
+export function labelConflicts(
+  current: Record<string, StoredLabel>,
+  incoming: Record<string, StoredLabel>,
+): { key: string; current: string; incoming: string }[] {
+  const out: { key: string; current: string; incoming: string }[] = [];
+  for (const [key, rec] of Object.entries(incoming)) {
+    const prev = current[key];
+    if (!prev) continue;
+    if ((prev.label || "") === (rec.label || "") && prev.spendable === rec.spendable) continue;
+    out.push({ key, current: prev.label, incoming: rec.label });
+  }
+  return out;
+}
+
 export function mergeLabels(
   current: Record<string, StoredLabel>,
   incoming: Record<string, StoredLabel>,
+  mode: "overwrite" | "keep" = "overwrite",
 ): Record<string, StoredLabel> {
-  return { ...current, ...incoming };
+  if (mode === "overwrite") return { ...current, ...incoming };
+  const next = { ...current };
+  for (const [key, rec] of Object.entries(incoming)) {
+    const prev = current[key];
+    if (prev && ((prev.label || "") !== (rec.label || "") || prev.spendable !== rec.spendable)) continue;
+    next[key] = rec;
+  }
+  return next;
 }
 
 export function lookupLabel(

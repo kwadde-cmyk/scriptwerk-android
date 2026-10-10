@@ -447,7 +447,8 @@ export function peelKeysFromText(text: string): { body: string; keys: KeyEntry[]
     if (/^scriptwerk-keys$/i.test(unhash)) continue;
     if (
       /^BSMS\b/i.test(unhash) ||
-      /^(wsh|sh|tr)\(/i.test(unhash) ||
+      /^(wsh|sh|tr|wpkh)\(/i.test(unhash) ||
+      /^no path restrictions$/i.test(unhash) ||
       /^\/\d/.test(unhash) ||
       unhash.startsWith("{") ||
       /^(name|wallet|BIP388)\b/i.test(unhash)
