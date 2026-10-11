@@ -14,7 +14,15 @@ import { Label } from "@/components/ui/label";
 import { useT } from "@/lib/use-t";
 import { numberLocale } from "@/lib/i18n";
 
-export function SpendCheckCard() {
+export function SpendCheckCard({
+  present: presentProp,
+  onPresentChange,
+  keysOnly = false,
+}: {
+  present?: string[];
+  onPresentChange?: (names: string[]) => void;
+  keysOnly?: boolean;
+} = {}) {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
   const compiled = useStudio(compiledForStudio);
@@ -27,7 +35,8 @@ export function SpendCheckCard() {
   const probe = useBitcoind((s) => s.probe);
   const status = useBitcoind((s) => s.status);
   const lastWatch = useBitcoind((s) => s.lastWatch);
-  const [present, setPresent] = useState<string[]>([]);
+  const [ownPresent, setOwnPresent] = useState<string[]>([]);
+  const present = presentProp ?? ownPresent;
   const [tip, setTip] = useState(0);
   const [tipSource, setTipSource] = useState<"core" | "electrum" | "manual">("manual");
   const [confirms, setConfirms] = useState(0);
@@ -87,13 +96,19 @@ export function SpendCheckCard() {
   }
 
   function toggle(name: string) {
-    setPresent((cur) => (cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name]));
+    const next = present.includes(name) ? present.filter((x) => x !== name) : [...present, name];
+    if (onPresentChange) onPresentChange(next);
+    else setOwnPresent(next);
   }
 
   return (
     <section className="space-y-3">
-      <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("spend.title")}</h2>
-      <p className="text-2xs text-pretty text-fg-muted">{frozen ? t("spend.frozen") : t("spend.blurb")}</p>
+      {keysOnly ? null : (
+        <>
+          <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("spend.title")}</h2>
+          <p className="text-2xs text-pretty text-fg-muted">{frozen ? t("spend.frozen") : t("spend.blurb")}</p>
+        </>
+      )}
 
       <div>
         <Label>{t("spend.have")}</Label>
@@ -120,6 +135,8 @@ export function SpendCheckCard() {
         </div>
       </div>
 
+      {keysOnly ? null : (
+      <>
       <div className={`grid gap-2 ${coins.length ? "grid-cols-1" : "grid-cols-2"}`}>
         <div>
           <Label htmlFor="spend-tip">{t("spend.tip")}</Label>
@@ -248,6 +265,8 @@ export function SpendCheckCard() {
           );
         })}
       </ul>
+      </>
+      )}
     </section>
   );
 }

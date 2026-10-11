@@ -31,10 +31,92 @@ import { cn } from "@/lib/utils";
 
 type CoinSort = "age" | "size" | "addr" | "tag";
 
-export function WatchWalletPanel() {
+export function UtxoLoadCard() {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
   const unit = useStudio((s) => s.amountUnit);
+  const compiled = useStudio(compiledForStudio);
+  const demo = useBitcoind((s) => s.demo);
+  const electrum = useBitcoind((s) => s.electrum);
+  const scanningWatch = useBitcoind((s) => s.scanningWatch);
+  const scanWatch = useBitcoind((s) => s.scanWatch);
+  const setOpen = useBitcoind((s) => s.setOpen);
+  const lastWatch = useBitcoind((s) => s.lastWatch);
+  const canScan = !demo && Boolean(electrum.trim());
+  const [count, setCount] = useState(20);
+  const [error, setError] = useState<string | null>(null);
+  const descriptor = compiled?.ok ? compiled.descriptor : "";
+  const checksum = descriptor ? checksumOf(descriptor) : "";
+  const snap = lastWatch && checksum && lastWatch.checksum === checksum ? lastWatch : null;
+
+  async function run() {
+    if (!canScan || !compiled?.ok) return;
+    const n = clampUtxoCount(count);
+    setCount(n);
+    setError(null);
+    try {
+      const merged = await scanWatch(compiled.descriptor, { count: n });
+      if (merged?.unspents.length) {
+        toast.success(
+          t("wallet.found", { n: merged.unspents.length, amount: formatAmount(merged.total, unit, nloc).label }),
+        );
+      } else {
+        toast.success(t("wallet.empty", { n: merged?.scanned ?? n }));
+      }
+    } catch (e) {
+      const msg = localizeMessage(locale, e instanceof Error ? e.message : "hw.utxo.bad");
+      setError(msg);
+      toast.error(msg);
+    }
+  }
+
+  return (
+    <section className="space-y-2">
+      <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.coins")}</h2>
+      {!canScan ? (
+        <div className="space-y-2">
+          <p className="text-xs text-fg-muted">{demo ? t("wallet.noDemo") : t("wallet.needElectrum")}</p>
+          <Button type="button" onClick={() => setOpen(true)}>
+            {t("node.open")}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="create-wallet-gap">{t("wallet.gap")}</Label>
+            <Input
+              id="create-wallet-gap"
+              type="number"
+              min={1}
+              max={1000}
+              value={count}
+              onChange={(e) => setCount(Number(e.target.value))}
+              className="w-24 font-mono text-xs"
+            />
+          </div>
+          <Button type="button" disabled={scanningWatch || !compiled?.ok} onClick={() => void run()}>
+            {scanningWatch ? t("wallet.working") : t("wallet.refresh")}
+          </Button>
+        </div>
+      )}
+      {scanningWatch && snap?.scanned ? (
+        <p className="text-2xs text-fg-muted">{t("hw.utxo.scanned", { n: snap.scanned })}</p>
+      ) : null}
+      {snap ? (
+        <p className="text-2xs text-fg-muted">
+          {t("spend.utxoCount", { n: snap.unspents.length })}
+        </p>
+      ) : (
+        <p className="text-2xs text-fg-muted">{t("wallet.needScan")}</p>
+      )}
+      {error ? <p className="text-2xs text-danger">{error}</p> : null}
+    </section>
+  );
+}
+
+export function WatchWalletPanel() {
+  const { t, locale } = useT();
+  const nloc = numberLocale(locale);
   const { name: titleName } = usePolicyTitle();
   const compiled = useStudio(compiledForStudio);
   const stages = useStudio((s) => s.stages);
@@ -43,16 +125,8 @@ export function WatchWalletPanel() {
   const frozen = useStudio((s) => policyIsFrozen(s.policyMode));
   const labels = useStudio((s) => s.labels);
   const importBip329 = useStudio((s) => s.importBip329);
-  const demo = useBitcoind((s) => s.demo);
-  const electrum = useBitcoind((s) => s.electrum);
   const lastWatch = useBitcoind((s) => s.lastWatch);
-  const scanningWatch = useBitcoind((s) => s.scanningWatch);
-  const scanWatch = useBitcoind((s) => s.scanWatch);
-  const setOpen = useBitcoind((s) => s.setOpen);
-  const canScan = !demo && Boolean(electrum.trim());
   const [labelAsk, setLabelAsk] = useState<{ text: string; names: string[] } | null>(null);
-  const [count, setCount] = useState(20);
-  const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<CoinSort>("age");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -132,27 +206,6 @@ export function WatchWalletPanel() {
     }
     return map;
   }, [snap]);
-
-  async function run() {
-    if (!canScan || !compiled?.ok) return;
-    const n = clampUtxoCount(count);
-    setCount(n);
-    setError(null);
-    try {
-      const merged = await scanWatch(compiled.descriptor, { count: n });
-      if (merged?.unspents.length) {
-        toast.success(
-          t("wallet.found", { n: merged.unspents.length, amount: formatAmount(merged.total, unit, nloc).label }),
-        );
-      } else {
-        toast.success(t("wallet.empty", { n: merged?.scanned ?? n }));
-      }
-    } catch (e) {
-      const msg = localizeMessage(locale, e instanceof Error ? e.message : "hw.utxo.bad");
-      setError(msg);
-      toast.error(msg);
-    }
-  }
 
   function exportLabels() {
     const records = buildBip329Export({
@@ -240,36 +293,7 @@ export function WatchWalletPanel() {
         )}
       </section>
 
-      {!canScan ? (
-        <div className="space-y-2">
-          <p className="text-xs text-fg-muted">{demo ? t("wallet.noDemo") : t("wallet.needElectrum")}</p>
-          <Button type="button" onClick={() => setOpen(true)}>
-            {t("node.open")}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
-            <Label htmlFor="wallet-gap">{t("wallet.gap")}</Label>
-            <Input
-              id="wallet-gap"
-              type="number"
-              min={1}
-              max={1000}
-              value={count}
-              onChange={(e) => setCount(Number(e.target.value))}
-              className="w-24 font-mono text-xs"
-            />
-          </div>
-          <Button type="button" disabled={scanningWatch || !compiled?.ok} onClick={() => void run()}>
-            {scanningWatch ? t("wallet.working") : t("wallet.refresh")}
-          </Button>
-        </div>
-      )}
-      {scanningWatch && snap?.scanned ? (
-        <p className="text-2xs text-fg-muted">{t("hw.utxo.scanned", { n: snap.scanned })}</p>
-      ) : null}
-      {error ? <p className="text-2xs text-danger">{error}</p> : null}
+      <p className="text-2xs text-fg-muted">{t("wallet.loadOnCreate")}</p>
 
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-2">

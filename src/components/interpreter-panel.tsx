@@ -25,9 +25,8 @@ import { Check, Copy, Search } from "lucide-react";
 import { useMemo, useState, memo, type ReactNode } from "react";
 import { toast } from "sonner";
 import { NodeCheckCard } from "@/components/node-rpc";
-import { SpendCheckCard } from "@/components/spend-check";
-import { WatchWalletPanel } from "@/components/watch-wallet";
-import { TxTab } from "@/components/tx-builder";
+import { WatchWalletPanel, UtxoLoadCard } from "@/components/watch-wallet";
+import { RecoveryTab, TxTab } from "@/components/tx-builder";
 import { ScriptHighlight } from "@/components/script-view";
 
 export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }: { toolbarStart?: ReactNode }) {
@@ -39,11 +38,13 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
     () => explainPolicy(root ?? { id: "empty", kind: "hole" }, locale, keys),
     [root, locale, keys],
   );
-  const issues = useMemo(() => validatePolicy(root, locale), [root, locale]);
+  const issues = useMemo(
+    () => validatePolicy(root, locale).filter((i) => i.level === "error" || i.level === "warn"),
+    [root, locale],
+  );
   const compiled = useStudio(compiledForStudio);
   const ms = compiled?.miniscript ?? "";
   const descriptorText = compiled?.ok ? compiled.descriptor : compiled?.error ?? t("read.noPolicy");
-  const problemCount = issues.filter((i) => i.level === "error" || i.level === "warn").length;
 
   return (
     <Tabs value={sheet} onValueChange={setSheet} className="flex h-full min-h-0 flex-col">
@@ -53,16 +54,13 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
           <TabsTrigger value="create" className="flex-1 px-1.5 text-xs">
             {t("read.sheet.create")}
           </TabsTrigger>
-          <TabsTrigger value="check" className="flex-1 px-1.5 text-xs">
-            {t("read.sheet.check")}
-            {problemCount ? (
-              <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 font-mono text-2xs text-warn">{problemCount}</span>
-            ) : null}
-          </TabsTrigger>
-          <TabsTrigger value="wallet" className="flex-1 px-1.5 text-xs">
+          <TabsTrigger value="wallet" className="flex-1 px-1 text-xs">
             {t("read.sheet.wallet")}
           </TabsTrigger>
-          <TabsTrigger value="tx" className="flex-1 px-1.5 text-xs">
+          <TabsTrigger value="recovery" className="flex-1 px-1 text-xs">
+            {t("read.sheet.recovery")}
+          </TabsTrigger>
+          <TabsTrigger value="tx" className="flex-1 px-1 text-xs">
             {t("read.sheet.tx")}
           </TabsTrigger>
         </TabsList>
@@ -75,6 +73,16 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
         <ScrollArea className="h-full">
           <div className="space-y-5 p-4">
             <p className="text-2xs text-pretty text-fg-muted">{t("read.sheet.createHint")}</p>
+            {issues.length ? (
+              <ul className="space-y-1.5">
+                {issues.map((iss, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs">
+                    <Badge variant={iss.level === "error" ? "danger" : "warn"}>{iss.level}</Badge>
+                    <span className="text-pretty text-fg-muted">{iss.message}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <section>
               <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("read.title")}</h2>
               <p className="mt-2 font-display text-lg leading-snug tracking-tight text-balance">{explained.title}</p>
@@ -117,31 +125,8 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
             <ScriptPeek title="Miniscript" value={ms} />
             <ScriptPeek title="Descriptor (wsh)" value={descriptorText} />
             <ScriptPeek title="BSMS" value={compiled?.ok ? bsmsRecord(compiled.descriptor) : ""} />
-          </div>
-        </ScrollArea>
-      </TabsContent>
-      <TabsContent
-        value="check"
-        className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
-      >
-        <ScrollArea className="h-full">
-          <div className="space-y-5 p-4">
-            <p className="text-2xs text-pretty text-fg-muted">{t("read.sheet.checkHint")}</p>
-            <section>
-              <h2 className="mb-2 text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("read.check")}</h2>
-              <ul className="space-y-1.5">
-                {issues.map((iss, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs">
-                    <Badge variant={iss.level === "error" ? "danger" : iss.level === "warn" ? "warn" : "default"}>
-                      {iss.level}
-                    </Badge>
-                    <span className="text-pretty text-fg-muted">{iss.message}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-            <SpendCheckCard />
             <NodeCheckCard />
+            <UtxoLoadCard />
           </div>
         </ScrollArea>
       </TabsContent>
@@ -152,6 +137,16 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
         <ScrollArea className="h-full">
           <div className="p-4">
             <WatchWalletPanel />
+          </div>
+        </ScrollArea>
+      </TabsContent>
+      <TabsContent
+        value="recovery"
+        className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+      >
+        <ScrollArea className="h-full">
+          <div className="p-4">
+            <RecoveryTab />
           </div>
         </ScrollArea>
       </TabsContent>

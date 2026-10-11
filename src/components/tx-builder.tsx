@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { QrCode, Trash2 } from "lucide-react";
 import { addressFromScan, addedSignaturePubkeys, btcToSats, buildPsbt, estimateVbytes, expandSpots, extractSignedTx, feeFromRate, mergePsbtSignatures, planPayments, samePsbtTransaction, satsFromDecimal, satsToDecimal, type ScriptSpot } from "@/lib/tx/psbt";
 import { signatureReport } from "@/lib/tx/sigs";
@@ -9,6 +9,8 @@ import { checksumOf } from "@/lib/miniscript/checksum";
 import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
 import { describeStageSlots, type Stage } from "@/lib/miniscript/stages";
 import { lockWhen } from "@/lib/miniscript/keys";
+import { coinsForPresent, inScope, openPathIndexes, pickPath, stageNeeds, type PathNeed, type RecoveryScope } from "@/lib/miniscript/recovery-select";
+import { SpendCheckCard } from "@/components/spend-check";
 import { compiledForStudio, isWpkhDescriptor } from "@/lib/miniscript/policy-mode";
 import { broadcastRawTx } from "@/lib/bitcoind/rpc";
 import { compileBip388 } from "@/lib/miniscript/bip388";
@@ -42,7 +44,6 @@ export function TxTab() {
   const stages = useStudio((s) => s.stages);
   const reuse = useStudio((s) => s.reuseKeys);
   const slots = useMemo(() => describeStageSlots(stages, reuse), [stages, reuse]);
-  const [mode, setMode] = useState<"send" | "recovery">("send");
   const [path, setPath] = useState<number | null>(null);
   const [signed, setSigned] = useState("");
   const signedRef = useRef("");
@@ -86,20 +87,8 @@ export function TxTab() {
           {pathIndex == null ? <p className="text-xs text-fg-muted">{t("tx.pathNeed")}</p> : null}
         </div>
       ) : null}
-      <div className="flex gap-1 rounded-lg border border-border p-1">
-        <Button type="button" className="flex-1" variant={mode === "send" ? "default" : "outline"} onClick={() => setMode("send")}>
-          {t("tx.send")}
-        </Button>
-        <Button type="button" className="flex-1" variant={mode === "recovery" ? "default" : "outline"} onClick={() => setMode("recovery")}>
-          {t("tx.recovery")}
-        </Button>
-      </div>
-      <Step n="1" title={mode === "send" ? t("tx.stepBuild") : t("tx.recovery")}>
-        {mode === "send" ? (
-          <SendPane pathIndex={pathIndex} syncRef={syncRef} clearRef={clearRef} takeSignature={takeSignature} />
-        ) : (
-          <RecoveryPane pathIndex={pathIndex} syncRef={syncRef} clearRef={clearRef} takeSignature={takeSignature} />
-        )}
+      <Step n="1" title={t("tx.stepBuild")}>
+        <SendPane pathIndex={pathIndex} syncRef={syncRef} clearRef={clearRef} takeSignature={takeSignature} />
       </Step>
       <Step n="2" title={t("tx.stepSign")}>
         <SignPane pathIndex={pathIndex} signed={signed} takeSignature={takeSignature} onDiscard={discard} />
@@ -384,53 +373,81 @@ function SendPane({
   );
 }
 
-function RecoveryPane({
-  pathIndex,
-  syncRef,
-  clearRef,
-  takeSignature,
-}: {
-  pathIndex: number | null;
-  syncRef: { current: (merged: string) => void };
-  clearRef: { current: () => void };
-  takeSignature: (next: string) => { merged: string; gained: boolean };
-}) {
+export function RecoveryTab() {
   const { t, locale } = useT();
   const stages = useStudio((s) => s.stages);
   const reuse = useStudio((s) => s.reuseKeys);
   const root = useStudio((s) => s.root);
+  const keys = useStudio((s) => s.keys);
   const compiled = useStudio(compiledForStudio);
   const watch = useBitcoind((s) => s.lastWatch);
+  const nodeStatus = useBitcoind((s) => s.status);
+  const demo = useBitcoind((s) => s.demo);
   const snap = watch && compiled?.ok && watch.checksum === checksumOf(compiled.descriptor) ? watch : null;
   const probe = useBitcoind((s) => s.probe);
   const tip = probe?.blocks && probe.chain !== "demo" ? probe.blocks : snap?.height ?? 0;
+  const slots = useMemo(() => describeStageSlots(stages, reuse), [stages, reuse]);
+  const needs = useMemo(() => stageNeeds(stages, reuse, keys), [stages, reuse, keys]);
+  const [scope, setScope] = useState<RecoveryScope>("open");
+  const [stageIndex, setStageIndex] = useState(0);
+  const [present, setPresent] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [drive, setDrive] = useState<"keys" | "coins">("coins");
   const [rate, setRate] = useState("2");
   const [feeAbs, setFeeAbs] = useState("");
   const [feeSource, setFeeSource] = useState<"rate" | "abs">("rate");
   const [built, setBuilt] = useState<{ id: string; psbt: string }[]>([]);
+  const [txids, setTxids] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  syncRef.current = (merged) => {
-    setBuilt((cur) =>
-      cur.map((b) => (b.psbt && samePsbtTransaction(b.psbt, merged) ? { ...b, psbt: mergePsbtSignatures(b.psbt, merged) } : b)),
-    );
-  };
-  clearRef.current = () => {
-    setBuilt([]);
-    setError(null);
-  };
+  const presentSet = useMemo(() => new Set(present), [present]);
 
-  const rows = useMemo(() => {
-    const coins = (snap?.unspents ?? []).filter((c) => {
-      if (!c.address || pathIndex == null) return false;
-      const status = evaluateCoinStatus({ height: c.height, tip, stages, reuse, root });
-      const path = status.paths[pathIndex];
-      return Boolean(path?.open && path.delay > 0);
+  const movable = useMemo(() => {
+    return (snap?.unspents ?? []).flatMap((coin) => {
+      if (!coin.address || coin.height <= 0) return [];
+      const status = evaluateCoinStatus({ height: coin.height, tip, stages, reuse, root });
+      const open = openPathIndexes(status.paths);
+      if (!open.length) return [];
+      return [{ id: `${coin.txid}:${coin.vout}`, coin, open }];
     });
-    const taken = new Set(coins.map((c) => c.address || ""));
-    const fresh = freshReceive(snap?.addresses ?? [], taken);
-    return coins.map((coin, i) => ({ coin, dest: fresh[i] ?? "" }));
-  }, [snap, tip, stages, reuse, root, pathIndex]);
+  }, [snap, tip, stages, reuse, root]);
+
+  const visible = useMemo(
+    () => movable.filter((c) => inScope(c.open, scope, stageIndex)),
+    [movable, scope, stageIndex],
+  );
+
+  useEffect(() => {
+    if (drive === "keys") {
+      const next = coinsForPresent(movable, needs, presentSet, scope, stageIndex);
+      setPicked((cur) => (cur.length === next.length && cur.every((id, i) => id === next[i]) ? cur : next));
+      return;
+    }
+    setPicked((cur) => {
+      const next = cur.filter((id) => visible.some((c) => c.id === id));
+      return next.length === cur.length && next.every((id, i) => id === cur[i]) ? cur : next;
+    });
+  }, [drive, movable, needs, presentSet, scope, stageIndex, visible]);
+
+  function onKeys(names: string[]) {
+    setPresent(names);
+    setDrive("keys");
+  }
+
+  function toggleCoin(id: string) {
+    setDrive("coins");
+    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  }
+
+  const selected = visible.filter((c) => picked.includes(c.id));
+  const taken = new Set(selected.map((c) => c.coin.address || ""));
+  const fresh = freshReceive(snap?.addresses ?? [], taken);
+  const rows = selected.map((row, i) => ({
+    ...row,
+    dest: fresh[i] ?? "",
+    pathIndex: pickPath(scope === "stage" ? row.open.filter((n) => n === stageIndex) : row.open, needs, presentSet) ?? row.open[0] ?? 0,
+  }));
+  const needPaths = [...new Set(rows.map((r) => r.pathIndex))];
 
   async function buildAll() {
     setError(null);
@@ -440,10 +457,10 @@ function RecoveryPane({
       for (const row of rows) {
         if (!row.dest) throw new Error("tx.err.fresh");
         if (row.dest === row.coin.address) throw new Error("tx.err.reuse");
-        const size = spendSize(stages, reuse, pathIndex ?? 0);
+        const size = spendSize(stages, reuse, row.pathIndex);
         const vb = estimateVbytes({ inputs: 1, outputs: [row.dest], sigs: size.sigs, keys: size.keys });
         const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
-        const locks = pathLock(stages, pathIndex ?? 0);
+        const locks = pathLock(stages, row.pathIndex);
         const plan = planPayments({
           coins: [asCoin(row.coin)],
           payments: [{ address: row.dest, sats: btcToSats(row.coin.amount) - feeSats }],
@@ -459,68 +476,188 @@ function RecoveryPane({
           plan.inputs.map((c) => c.address),
           plan.outputs.map((o) => o.address),
         );
-        next.push({ id: `${row.coin.txid}:${row.coin.vout}`, psbt: buildPsbt(plan, meta) });
+        next.push({ id: row.id, psbt: buildPsbt(plan, meta) });
       }
       setBuilt(next);
+      setTxids({});
     } catch (e) {
       setBuilt([]);
       setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.funds"));
     }
   }
 
+  async function sendOne(id: string, psbt: string) {
+    setError(null);
+    try {
+      const hex = extractSignedTx(psbt);
+      const node = useBitcoind.getState();
+      const txid = await broadcastRawTx({ url: node.url, username: node.username, password: node.password }, hex);
+      setTxids((cur) => ({ ...cur, [id]: txid }));
+    } catch (e) {
+      setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.err.broadcast"));
+    }
+  }
+
+  const sample = rows[0];
+  const sampleSize = spendSize(stages, reuse, sample?.pathIndex ?? 0);
+
   return (
-    <section className="space-y-3">
-      <p className="text-2xs text-pretty text-fg-muted">{t("tx.recoveryBlurb")}</p>
-      <FeePair id="tx-rec-fee" vbytes={rows[0] ? estimateVbytes({ inputs: 1, outputs: [rows[0].dest || ""], sigs: spendSize(stages, reuse, pathIndex ?? 0).sigs, keys: spendSize(stages, reuse, pathIndex ?? 0).keys }) : 0} rate={rate} abs={feeAbs} source={feeSource} onRate={setRate} onAbs={setFeeAbs} onSource={setFeeSource} />
-      {!rows.length ? <p className="text-xs text-fg-muted">{t("tx.recoveryEmpty")}</p> : null}
+    <div className="space-y-5">
+      <p className="text-2xs text-pretty text-fg-muted">{t("rec.blurb")}</p>
+      <div className="flex gap-1 rounded-lg border border-border p-1">
+        <Button type="button" className="flex-1" variant={scope === "stage" ? "default" : "outline"} onClick={() => setScope("stage")}>
+          {t("rec.byStage")}
+        </Button>
+        <Button type="button" className="flex-1" variant={scope === "open" ? "default" : "outline"} onClick={() => setScope("open")}>
+          {t("rec.allOpen")}
+        </Button>
+      </div>
+      {scope === "stage" ? (
+        <div className="flex flex-wrap gap-2">
+          {slots.map((slot, i) => (
+            <Button key={slot.id} type="button" variant={stageIndex === i ? "default" : "outline"} onClick={() => setStageIndex(i)}>
+              {slot.quorum} · {lockWhen(slot.lock, slot.delay, locale)}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      <p className="text-2xs text-pretty text-fg-muted">{t("rec.keysHint")}</p>
+      <SpendCheckCard present={present} onPresentChange={onKeys} keysOnly />
+      {rows.length ? (
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("rec.need")}</h2>
+          <span className="font-mono text-2xs text-fg-muted">{t("rec.selected", { n: rows.length })}</span>
+        </div>
+        <ul className="space-y-1">
+          {needPaths.map((i) => {
+            const need = needs[i];
+            if (!need) return null;
+            return <NeedLine key={i} need={need} present={presentSet} slotLabel={slots[i] ? `${slots[i].quorum} · ${lockWhen(slots[i].lock, slots[i].delay, locale)}` : need.quorum} />;
+          })}
+        </ul>
+      </section>
+      ) : null}
+      <section className="space-y-2">
+        <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("rec.coins")}</h2>
+        {!visible.length ? <p className="text-xs text-fg-muted">{t("rec.empty")}</p> : null}
+        <ul className="space-y-1">
+          {visible.map((row) => {
+            const on = picked.includes(row.id);
+            return (
+              <li key={row.id}>
+                <button
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleCoin(row.id)}
+                  className={
+                    on
+                      ? "flex min-h-11 w-full items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-left text-xs"
+                      : "flex min-h-11 w-full items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-left text-xs text-fg-muted"
+                  }
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono">{row.coin.txid.slice(0, 10)}…:{row.coin.vout}</span>
+                    <span className="block text-2xs text-fg-subtle">
+                      {row.open.map((i) => slots[i] ? `${slots[i].quorum} · ${lockWhen(slots[i].lock, slots[i].delay, locale)}` : "").filter(Boolean).join(" · ")}
+                    </span>
+                  </span>
+                  <AmountInline btc={row.coin.amount} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+      <FeePair
+        id="tx-rec-fee"
+        vbytes={sample ? estimateVbytes({ inputs: 1, outputs: [sample.dest || ""], sigs: sampleSize.sigs, keys: sampleSize.keys }) : 0}
+        rate={rate}
+        abs={feeAbs}
+        source={feeSource}
+        onRate={setRate}
+        onAbs={setFeeAbs}
+        onSource={setFeeSource}
+      />
       <ul className="space-y-3">
         {rows.map((row) => {
-          const id = `${row.coin.txid}:${row.coin.vout}`;
-          const psbt = built.find((b) => b.id === id)?.psbt ?? "";
-          const size = spendSize(stages, reuse, pathIndex ?? 0);
+          const psbt = built.find((b) => b.id === row.id)?.psbt ?? "";
+          const size = spendSize(stages, reuse, row.pathIndex);
           const vb = estimateVbytes({ inputs: 1, outputs: [row.dest || ""], sigs: size.sigs, keys: size.keys });
           const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
           const outSats = Math.max(0, btcToSats(row.coin.amount) - feeSats);
           return (
-            <li key={id} className="space-y-2 rounded-md border border-border p-3">
+            <li key={row.id} className="space-y-2 rounded-md border border-border p-3">
               <p className="font-mono text-2xs text-fg-muted">{row.coin.txid.slice(0, 12)}…:{row.coin.vout}</p>
               <p className="break-all font-mono text-xs">{t("tx.from")} {row.coin.address}</p>
               <p className="break-all font-mono text-xs">{t("tx.to")} {row.dest || t("tx.noFresh")}</p>
               <p className="text-xs text-fg-muted">
                 <AmountInline btc={outSats / 1e8} /> · {t("tx.feeHint", { vb: String(vb), sats: String(feeSats) })}
               </p>
-              <div className="flex flex-wrap gap-2">
-                {psbt ? (
-                  <PsbtExport
-                    value={psbt}
-                    name={`scriptwerk-${id.replace(":", "-")}.psbt`}
-                    extra={
+              {psbt ? (
+                <PsbtExport
+                  value={psbt}
+                  name={`scriptwerk-${row.id.replace(":", "-")}.psbt`}
+                  extra={
+                    <>
                       <Button
                         type="button"
                         variant="outline"
                         disabled={!!busy}
                         onClick={() =>
-                          void signDetected(psbt, setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt: next } : b))), setError, locale).then(
-                            (next) => next && deliver(next, (merged) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt: merged } : b))), takeSignature, pathIndex, setError, locale),
+                          void signDetected(psbt, setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === row.id ? { ...b, psbt: next } : b))), setError, locale).then(
+                            (next) => {
+                              if (!next) return;
+                              setBuilt((cur) => cur.map((b) => (b.id === row.id ? { ...b, psbt: next.psbt } : b)));
+                              if (next.added) noteSigned(next.psbt, row.pathIndex);
+                              else setError(localizeMessage(locale, "tx.err.noSig"));
+                            },
                           )
                         }
                       >
                         {busy ? t("tx.signing") : t("tx.usb")}
                       </Button>
-                    }
-                  />
-                ) : (
-                  <span className="text-2xs text-fg-muted">{t("tx.buildEach")}</span>
-                )}
-              </div>
-              {psbt ? <SigStatus psbt={psbt} pathIndex={pathIndex} /> : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={nodeStatus !== "ready" || demo}
+                        onClick={() => void sendOne(row.id, psbt)}
+                      >
+                        {t("rec.broadcast")}
+                      </Button>
+                    </>
+                  }
+                />
+              ) : (
+                <span className="text-2xs text-fg-muted">{t("tx.buildEach")}</span>
+              )}
+              {psbt ? <SigStatus psbt={psbt} pathIndex={row.pathIndex} /> : null}
+              {txids[row.id] ? <p className="break-all font-mono text-2xs">{txids[row.id]}</p> : null}
             </li>
           );
         })}
       </ul>
-      <Button type="button" onClick={buildAll} disabled={!rows.length || pathIndex == null}>{t("tx.buildEach")}</Button>
+      <Button type="button" onClick={() => void buildAll()} disabled={!rows.length}>{t("tx.buildEach")}</Button>
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
-    </section>
+    </div>
+  );
+}
+
+function NeedLine({ need, present, slotLabel }: { need: PathNeed; present: ReadonlySet<string>; slotLabel: string }) {
+  const { t } = useT();
+  const missingMust = need.mustLabels.filter((_, i) => !present.has(need.must[i] ?? ""));
+  const restHave = need.rest.filter((n) => present.has(n)).length;
+  const restMissing = need.restLabels.filter((_, i) => !present.has(need.rest[i] ?? ""));
+  return (
+    <li className="text-xs text-pretty text-fg">
+      <span className="font-mono text-2xs text-fg-muted">{slotLabel}</span>
+      {missingMust.length ? <span className="mt-0.5 block text-danger">{t("spend.mustHave")}: {missingMust.join(", ")}</span> : null}
+      {need.restNeed > restHave ? (
+        <span className="mt-0.5 block">{t("spend.needOf", { k: need.restNeed - restHave, keys: restMissing.join(", ") || "—" })}</span>
+      ) : (
+        <span className="mt-0.5 block text-ok">{t("spend.now")}</span>
+      )}
+    </li>
   );
 }
 
