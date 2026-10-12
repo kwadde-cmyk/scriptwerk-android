@@ -8,8 +8,9 @@ import { Tip } from "@/components/ui/tooltip";
 import { checksumOf } from "@/lib/miniscript/checksum";
 import { evaluateCoinStatus } from "@/lib/miniscript/coin-status";
 import { describeStageSlots, type Stage } from "@/lib/miniscript/stages";
-import { lockWhen } from "@/lib/miniscript/keys";
+import { lockWhen, keyHeadline } from "@/lib/miniscript/keys";
 import { coinsForPresent, inScope, openPathIndexes, pickPath, stageNeeds, type PathNeed, type RecoveryScope } from "@/lib/miniscript/recovery-select";
+import { coinLabel } from "@/lib/bip329";
 import { SpendCheckCard } from "@/components/spend-check";
 import { compiledForStudio, isWpkhDescriptor } from "@/lib/miniscript/policy-mode";
 import { broadcastRawTx } from "@/lib/bitcoind/rpc";
@@ -17,6 +18,7 @@ import { compileBip388 } from "@/lib/miniscript/bip388";
 import { useBitcoind } from "@/store/bitcoind";
 import { useHardware } from "@/store/hardware";
 import { pickUsbKind } from "@/lib/hw/usb-kind";
+import { isHmacHex } from "@/lib/hw/address-check";
 import { useStudio } from "@/store/studio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -379,6 +381,7 @@ export function RecoveryTab() {
   const reuse = useStudio((s) => s.reuseKeys);
   const root = useStudio((s) => s.root);
   const keys = useStudio((s) => s.keys);
+  const labels = useStudio((s) => s.labels);
   const compiled = useStudio(compiledForStudio);
   const watch = useBitcoind((s) => s.lastWatch);
   const nodeStatus = useBitcoind((s) => s.status);
@@ -392,6 +395,7 @@ export function RecoveryTab() {
   const [stageIndex, setStageIndex] = useState(0);
   const [present, setPresent] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
+  const [mergeOn, setMergeOn] = useState<string[]>([]);
   const [drive, setDrive] = useState<"keys" | "coins">("coins");
   const [rate, setRate] = useState("2");
   const [feeAbs, setFeeAbs] = useState("");
@@ -399,7 +403,7 @@ export function RecoveryTab() {
   const [built, setBuilt] = useState<{ id: string; psbt: string }[]>([]);
   const [txids, setTxids] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [signOpen, setSignOpen] = useState(false);
   const presentSet = useMemo(() => new Set(present), [present]);
 
   const movable = useMemo(() => {
@@ -408,9 +412,9 @@ export function RecoveryTab() {
       const status = evaluateCoinStatus({ height: coin.height, tip, stages, reuse, root });
       const open = openPathIndexes(status.paths);
       if (!open.length) return [];
-      return [{ id: `${coin.txid}:${coin.vout}`, coin, open }];
+      return [{ id: `${coin.txid}:${coin.vout}`, coin, open, tag: coinLabel(labels, coin.txid, coin.vout, coin.address) }];
     });
-  }, [snap, tip, stages, reuse, root]);
+  }, [snap, tip, stages, reuse, root, labels]);
 
   const visible = useMemo(
     () => movable.filter((c) => inScope(c.open, scope, stageIndex)),
@@ -440,30 +444,43 @@ export function RecoveryTab() {
   }
 
   const selected = visible.filter((c) => picked.includes(c.id));
-  const taken = new Set(selected.map((c) => c.coin.address || ""));
-  const fresh = freshReceive(snap?.addresses ?? [], taken);
-  const rows = selected.map((row, i) => ({
+  const rows = selected.map((row) => ({
     ...row,
-    dest: fresh[i] ?? "",
     pathIndex: pickPath(scope === "stage" ? row.open.filter((n) => n === stageIndex) : row.open, needs, presentSet) ?? row.open[0] ?? 0,
   }));
+  const bundles = bundleByTag(rows, new Set(mergeOn)).map((bundle, i, all) => {
+    const taken = new Set(all.flatMap((b) => b.members.map((m) => m.coin.address || "")));
+    return { ...bundle, dest: freshReceive(snap?.addresses ?? [], taken)[i] ?? "" };
+  });
   const needPaths = [...new Set(rows.map((r) => r.pathIndex))];
+  const tagged = visible.filter((c) => c.tag.trim());
+  const allMerge = tagged.length > 0 && tagged.every((c) => mergeOn.includes(c.id));
+
+  function toggleMerge(id: string) {
+    setMergeOn((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  }
+
+  function setAllMerge(on: boolean) {
+    const ids = tagged.map((c) => c.id);
+    setMergeOn((cur) => (on ? [...new Set([...cur, ...ids])] : cur.filter((id) => !ids.includes(id))));
+  }
 
   async function buildAll() {
     setError(null);
     const next: { id: string; psbt: string }[] = [];
     try {
       if (!compiled?.ok) throw new Error("tx.err.script");
-      for (const row of rows) {
-        if (!row.dest) throw new Error("tx.err.fresh");
-        if (row.dest === row.coin.address) throw new Error("tx.err.reuse");
-        const size = spendSize(stages, reuse, row.pathIndex);
-        const vb = estimateVbytes({ inputs: 1, outputs: [row.dest], sigs: size.sigs, keys: size.keys });
+      for (const bundle of bundles) {
+        if (!bundle.dest) throw new Error("tx.err.fresh");
+        if (bundle.members.some((m) => bundle.dest === m.coin.address)) throw new Error("tx.err.reuse");
+        const size = spendSize(stages, reuse, bundle.pathIndex);
+        const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest], sigs: size.sigs, keys: size.keys });
         const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
-        const locks = pathLock(stages, row.pathIndex);
+        const total = bundle.members.reduce((sum, m) => sum + btcToSats(m.coin.amount), 0);
+        const locks = pathLock(stages, bundle.pathIndex);
         const plan = planPayments({
-          coins: [asCoin(row.coin)],
-          payments: [{ address: row.dest, sats: btcToSats(row.coin.amount) - feeSats }],
+          coins: bundle.members.map((m) => asCoin(m.coin)),
+          payments: [{ address: bundle.dest, sats: total - feeSats }],
           feeSats,
           tip,
           older: locks.older,
@@ -476,7 +493,7 @@ export function RecoveryTab() {
           plan.inputs.map((c) => c.address),
           plan.outputs.map((o) => o.address),
         );
-        next.push({ id: row.id, psbt: buildPsbt(plan, meta) });
+        next.push({ id: bundle.id, psbt: buildPsbt(plan, meta) });
       }
       setBuilt(next);
       setTxids({});
@@ -498,7 +515,7 @@ export function RecoveryTab() {
     }
   }
 
-  const sample = rows[0];
+  const sample = bundles[0];
   const sampleSize = spendSize(stages, reuse, sample?.pathIndex ?? 0);
 
   return (
@@ -539,21 +556,28 @@ export function RecoveryTab() {
       </section>
       ) : null}
       <section className="space-y-2">
-        <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("rec.coins")}</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("rec.coins")}</h2>
+          <Button type="button" variant={allMerge ? "default" : "outline"} disabled={!tagged.length} aria-pressed={allMerge} onClick={() => setAllMerge(!allMerge)}>
+            {t("rec.mergeTag")}
+          </Button>
+        </div>
+        {tagged.length ? <p className="text-2xs text-pretty text-fg-muted">{t("rec.mergeHint")}</p> : null}
         {!visible.length ? <p className="text-xs text-fg-muted">{t("rec.empty")}</p> : null}
         <ul className="space-y-1">
           {visible.map((row) => {
             const on = picked.includes(row.id);
+            const merge = mergeOn.includes(row.id);
             return (
-              <li key={row.id}>
+              <li key={row.id} className="flex items-stretch gap-1">
                 <button
                   type="button"
                   aria-pressed={on}
                   onClick={() => toggleCoin(row.id)}
                   className={
                     on
-                      ? "flex min-h-11 w-full items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-left text-xs"
-                      : "flex min-h-11 w-full items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-left text-xs text-fg-muted"
+                      ? "flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-left text-xs"
+                      : "flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-left text-xs text-fg-muted"
                   }
                 >
                   <span className="min-w-0">
@@ -564,6 +588,20 @@ export function RecoveryTab() {
                   </span>
                   <AmountInline btc={row.coin.amount} />
                 </button>
+                {row.tag.trim() ? (
+                  <button
+                    type="button"
+                    aria-pressed={merge}
+                    onClick={() => toggleMerge(row.id)}
+                    className={
+                      merge
+                        ? "max-w-28 shrink-0 rounded-md bg-primary px-2 text-2xs text-primary-foreground"
+                        : "max-w-28 shrink-0 rounded-md border border-border px-2 text-2xs text-fg-muted"
+                    }
+                  >
+                    <span className="block truncate">{row.tag}</span>
+                  </button>
+                ) : null}
               </li>
             );
           })}
@@ -571,7 +609,7 @@ export function RecoveryTab() {
       </section>
       <FeePair
         id="tx-rec-fee"
-        vbytes={sample ? estimateVbytes({ inputs: 1, outputs: [sample.dest || ""], sigs: sampleSize.sigs, keys: sampleSize.keys }) : 0}
+        vbytes={sample ? estimateVbytes({ inputs: sample.members.length, outputs: [sample.dest || ""], sigs: sampleSize.sigs, keys: sampleSize.keys }) : 0}
         rate={rate}
         abs={feeAbs}
         source={feeSource}
@@ -580,64 +618,63 @@ export function RecoveryTab() {
         onSource={setFeeSource}
       />
       <ul className="space-y-3">
-        {rows.map((row) => {
-          const psbt = built.find((b) => b.id === row.id)?.psbt ?? "";
-          const size = spendSize(stages, reuse, row.pathIndex);
-          const vb = estimateVbytes({ inputs: 1, outputs: [row.dest || ""], sigs: size.sigs, keys: size.keys });
+        {bundles.map((bundle) => {
+          const psbt = built.find((b) => b.id === bundle.id)?.psbt ?? "";
+          const size = spendSize(stages, reuse, bundle.pathIndex);
+          const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest || ""], sigs: size.sigs, keys: size.keys });
           const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
-          const outSats = Math.max(0, btcToSats(row.coin.amount) - feeSats);
+          const total = bundle.members.reduce((sum, m) => sum + btcToSats(m.coin.amount), 0);
+          const outSats = Math.max(0, total - feeSats);
+          const title = bundle.tag
+            ? `${bundle.tag} · ${bundle.members.length}`
+            : `${bundle.members[0]?.coin.txid.slice(0, 12) ?? ""}…:${bundle.members[0]?.coin.vout ?? ""}`;
           return (
-            <li key={row.id} className="space-y-2 rounded-md border border-border p-3">
-              <p className="font-mono text-2xs text-fg-muted">{row.coin.txid.slice(0, 12)}…:{row.coin.vout}</p>
-              <p className="break-all font-mono text-xs">{t("tx.from")} {row.coin.address}</p>
-              <p className="break-all font-mono text-xs">{t("tx.to")} {row.dest || t("tx.noFresh")}</p>
+            <li key={bundle.id} className="space-y-2 rounded-md border border-border p-3">
+              <p className="font-mono text-2xs text-fg-muted">{title}</p>
+              {bundle.members.map((m) => (
+                <p key={m.id} className="break-all font-mono text-xs">{t("tx.from")} {m.coin.address}</p>
+              ))}
+              <p className="break-all font-mono text-xs">{t("tx.to")} {bundle.dest || t("tx.noFresh")}</p>
               <p className="text-xs text-fg-muted">
                 <AmountInline btc={outSats / 1e8} /> · {t("tx.feeHint", { vb: String(vb), sats: String(feeSats) })}
               </p>
               {psbt ? (
-                <PsbtExport
-                  value={psbt}
-                  name={`scriptwerk-${row.id.replace(":", "-")}.psbt`}
-                  extra={
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!!busy}
-                        onClick={() =>
-                          void signDetected(psbt, setBusy, (next) => setBuilt((cur) => cur.map((b) => (b.id === row.id ? { ...b, psbt: next } : b))), setError, locale).then(
-                            (next) => {
-                              if (!next) return;
-                              setBuilt((cur) => cur.map((b) => (b.id === row.id ? { ...b, psbt: next.psbt } : b)));
-                              if (next.added) noteSigned(next.psbt, row.pathIndex);
-                              else setError(localizeMessage(locale, "tx.err.noSig"));
-                            },
-                          )
-                        }
-                      >
-                        {busy ? t("tx.signing") : t("tx.usb")}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={nodeStatus !== "ready" || demo}
-                        onClick={() => void sendOne(row.id, psbt)}
-                      >
-                        {t("rec.broadcast")}
-                      </Button>
-                    </>
-                  }
-                />
+                <PsbtExport value={psbt} name={`scriptwerk-${bundle.id.replace(/[:]/g, "-")}.psbt`} extra={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={nodeStatus !== "ready" || demo}
+                    onClick={() => void sendOne(bundle.id, psbt)}
+                  >
+                    {t("rec.broadcast")}
+                  </Button>
+                } />
               ) : (
                 <span className="text-2xs text-fg-muted">{t("tx.buildEach")}</span>
               )}
-              {psbt ? <SigStatus psbt={psbt} pathIndex={row.pathIndex} /> : null}
-              {txids[row.id] ? <p className="break-all font-mono text-2xs">{txids[row.id]}</p> : null}
+              {psbt ? <SigStatus psbt={psbt} pathIndex={bundle.pathIndex} /> : null}
+              {txids[bundle.id] ? <p className="break-all font-mono text-2xs">{txids[bundle.id]}</p> : null}
             </li>
           );
         })}
       </ul>
-      <Button type="button" onClick={() => void buildAll()} disabled={!rows.length}>{t("tx.buildEach")}</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" onClick={() => void buildAll()} disabled={!bundles.length}>{t("tx.buildEach")}</Button>
+        <Button type="button" variant="outline" disabled={!built.length} onClick={() => setSignOpen(true)}>{t("rec.sign")}</Button>
+      </div>
+      <RecoverySignDialog
+        open={signOpen}
+        onOpenChange={setSignOpen}
+        items={bundles.flatMap((bundle) => {
+          const psbt = built.find((b) => b.id === bundle.id)?.psbt;
+          if (!psbt) return [];
+          const title = bundle.tag
+            ? `${bundle.tag} · ${bundle.members.length}`
+            : `${bundle.members[0]?.coin.txid.slice(0, 10) ?? ""}…:${bundle.members[0]?.coin.vout ?? ""}`;
+          return [{ id: bundle.id, psbt, pathIndex: bundle.pathIndex, title }];
+        })}
+        onUpdate={(id, psbt) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt } : b)))}
+      />
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
     </div>
   );
@@ -658,6 +695,279 @@ function NeedLine({ need, present, slotLabel }: { need: PathNeed; present: Reado
         <span className="mt-0.5 block text-ok">{t("spend.now")}</span>
       )}
     </li>
+  );
+}
+
+type SignItem = { id: string; psbt: string; pathIndex: number; title: string };
+type SignTransport = "qr" | "file" | "ledger" | "bitbox";
+
+function mentionsKey(label: string, name: string, note: string): boolean {
+  if (note && (label === note || label.startsWith(`${note} `))) return true;
+  return label.split(/\s+/).some((part) => part === name || (part.startsWith(name) && /^\d+$/.test(part.slice(name.length))));
+}
+
+function RecoverySignDialog({
+  open,
+  onOpenChange,
+  items,
+  onUpdate,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  items: SignItem[];
+  onUpdate: (id: string, psbt: string) => void;
+}) {
+  const { t, locale } = useT();
+  const keys = useStudio((s) => s.keys);
+  const stages = useStudio((s) => s.stages);
+  const reuse = useStudio((s) => s.reuseKeys);
+  const hmac = useHardware((s) => s.lastHmac);
+  const compiled = useStudio(compiledForStudio);
+  const needs = useMemo(() => stageNeeds(stages, reuse, keys), [stages, reuse, keys]);
+  const [phase, setPhase] = useState<"pick" | "run">("pick");
+  const [keyName, setKeyName] = useState("");
+  const [transport, setTransport] = useState<SignTransport | null>(null);
+  const [scan, setScan] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const wasOpen = useRef(false);
+
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setPhase("pick");
+      setKeyName("");
+      setTransport(null);
+      setScan(false);
+      setError(null);
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  function reportOf(item: SignItem) {
+    try {
+      return signatureReport(item.psbt, { keys, stages, reuse, pathIndex: item.pathIndex });
+    } catch {
+      return null;
+    }
+  }
+
+  function gapOf(item: SignItem): number {
+    const report = reportOf(item);
+    if (!report) return 0;
+    return report.inputs.reduce((n, input) => (input.pathReady ? n : n + Math.max(0, input.need - input.haveOnPath)), 0);
+  }
+
+  function onPath(item: SignItem, name: string): boolean {
+    const need = needs[item.pathIndex];
+    return Boolean(need && (need.must.includes(name) || need.rest.includes(name)));
+  }
+
+  function signedBy(item: SignItem, name: string): boolean {
+    const key = keys.find((k) => k.name === name);
+    const note = key?.note.trim() ?? "";
+    const report = reportOf(item);
+    return Boolean(report?.inputs.some((input) => input.present.some((p) => p.onPath && mentionsKey(p.label, name, note))));
+  }
+
+  function waiting(item: SignItem, name: string): boolean {
+    return onPath(item, name) && gapOf(item) > 0 && !signedBy(item, name);
+  }
+
+  const masters = keys.filter((k) => k.name.trim()).sort((a, b) => a.name.localeCompare(b.name));
+  const involved = masters.filter((k) => items.some((item) => onPath(item, k.name)));
+  const forKey = items.filter((item) => keyName && onPath(item, keyName));
+  const queue = forKey.filter((item) => waiting(item, keyName));
+  const current = queue[0];
+  const leftSigs = items.reduce((n, item) => n + gapOf(item), 0);
+  const wpkh = Boolean(compiled?.ok && isWpkhDescriptor(compiled.descriptor));
+  const registerFirst = transport === "ledger" && !wpkh && !isHmacHex(hmac);
+
+  function take(text: string) {
+    if (!current) return;
+    setError(null);
+    const next = text.trim();
+    if (!samePsbtTransaction(current.psbt, next)) {
+      setError(localizeMessage(locale, "tx.err.qr"));
+      return;
+    }
+    const merged = mergePsbtSignatures(current.psbt, next);
+    if (!addedSignaturePubkeys(current.psbt, merged).length) {
+      setError(localizeMessage(locale, "tx.err.noSig"));
+      return;
+    }
+    onUpdate(current.id, merged);
+    noteSigned(merged, current.pathIndex);
+  }
+
+  async function takeFiles(list: File[]) {
+    setError(null);
+    const pending = queue;
+    let missed = 0;
+    for (const file of list) {
+      const text = (await readPsbtFile(file)).trim();
+      const hit = pending.find((item) => samePsbtTransaction(item.psbt, text));
+      if (!hit) {
+        missed += 1;
+        continue;
+      }
+      const merged = mergePsbtSignatures(hit.psbt, text);
+      if (!addedSignaturePubkeys(hit.psbt, merged).length) {
+        missed += 1;
+        continue;
+      }
+      onUpdate(hit.id, merged);
+      noteSigned(merged, hit.pathIndex);
+    }
+    if (missed) setError(localizeMessage(locale, "tx.err.qr"));
+  }
+
+  async function sendDevice() {
+    if (!current || (transport !== "ledger" && transport !== "bitbox")) return;
+    setError(null);
+    const next = await sign(current.psbt, transport, setBusy, (psbt) => onUpdate(current.id, psbt), setError, locale);
+    if (next?.added) noteSigned(next.psbt, current.pathIndex);
+  }
+
+  const active = keys.find((k) => k.name === keyName);
+
+  return (
+    <>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t("rec.signTitle")}</DialogTitle>
+          <DialogDescription>{t("rec.signBlurb")}</DialogDescription>
+        </DialogHeader>
+        <p className="text-sm text-fg">{t("rec.leftSigs", { n: leftSigs })}</p>
+        {phase === "pick" ? (
+          <div className="space-y-4">
+            <div>
+              <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("rec.whichKey")}</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {involved.map((k) => {
+                  const left = items.filter((item) => waiting(item, k.name)).length;
+                  const on = keyName === k.name;
+                  return (
+                    <button
+                      key={k.id}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setKeyName(k.name)}
+                      className={
+                        on
+                          ? "min-h-9 rounded-full bg-primary px-3 text-xs text-primary-foreground"
+                          : "min-h-9 rounded-full border border-border px-3 text-xs text-fg-muted"
+                      }
+                    >
+                      {keyHeadline(k)}
+                      <span className="ml-1.5 font-mono text-2xs opacity-70">{k.name}</span>
+                      <span className="ml-1.5 font-mono text-2xs opacity-70">{left}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("rec.transport")}</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {(["qr", "file", "ledger", "bitbox"] as const).map((kind) => (
+                  <Button key={kind} type="button" variant={transport === kind ? "default" : "outline"} onClick={() => setTransport(kind)}>
+                    {kind === "qr" ? t("tx.exportQr") : kind === "file" ? t("rec.file") : kind === "ledger" ? "Ledger" : "BitBox"}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <Button type="button" disabled={!keyName || !transport} onClick={() => { setError(null); setPhase("run"); }}>
+              {t("rec.start")}
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-fg-muted">{active ? keyHeadline(active) : keyName} · {transport === "qr" ? t("tx.exportQr") : transport === "file" ? t("rec.file") : transport === "ledger" ? "Ledger" : "BitBox"}</p>
+              <Button type="button" variant="ghost" onClick={() => setPhase("pick")}>{t("rec.nextKey")}</Button>
+            </div>
+            {!current ? (
+              <p className="text-sm text-fg">{forKey.length ? t("rec.keyDone") : t("rec.noQueue")}</p>
+            ) : (
+              <>
+                <p className="text-sm text-fg">
+                  {t("rec.txOf", { i: forKey.length - queue.length + 1, n: forKey.length })}
+                  <span className="mt-0.5 block font-mono text-xs text-fg-muted">{current.title}</span>
+                  <span className="mt-0.5 block text-xs text-fg-muted">{t("rec.txGap", { n: gapOf(current) })}</span>
+                </p>
+                {registerFirst ? <p className="text-xs text-pretty text-fg-muted">{t("rec.ledgerReg")}</p> : null}
+                {transport === "qr" ? (
+                  <>
+                    <QrPreview value={current.psbt} label={t("tx.exportQr")} compact />
+                    <Button type="button" variant="outline" onClick={() => setScan(true)}>{t("rec.importBack")}</Button>
+                  </>
+                ) : null}
+                {transport === "file" ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-pretty text-fg-muted">{t("rec.fileAll")}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          downloadPsbtZip(
+                            queue.map((item, i) => ({
+                              name: `${String(i + 1).padStart(2, "0")}-${item.id.replace(":", "-")}.psbt`,
+                              b64: item.psbt,
+                            })),
+                            `scriptwerk-${keyName || "recovery"}.zip`,
+                          )
+                        }
+                      >
+                        {t("rec.downloadAll")}
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>{t("rec.importBack")}</Button>
+                      <input
+                        ref={fileRef}
+                        type="file"
+                        multiple
+                        accept=".psbt,.txn,application/octet-stream"
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = e.target.files ? [...e.target.files] : [];
+                          e.target.value = "";
+                          if (files.length) void takeFiles(files);
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+                {transport === "ledger" || transport === "bitbox" ? (
+                  <Button type="button" variant="outline" disabled={!!busy} onClick={() => void sendDevice()}>
+                    {busy ? t("tx.signing") : t("rec.sendDevice")}
+                  </Button>
+                ) : null}
+                <SigStatus psbt={current.psbt} pathIndex={current.pathIndex} />
+              </>
+            )}
+          </div>
+        )}
+        {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
+      </DialogContent>
+    </Dialog>
+    <Dialog open={scan} onOpenChange={setScan}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("tx.scan")}</DialogTitle>
+          <DialogDescription>{t("tx.qrVideoHint")}</DialogDescription>
+        </DialogHeader>
+        <QrScanner
+          video
+          onRead={(text) => {
+            take(text.trim());
+            setScan(false);
+          }}
+        />
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -948,6 +1258,67 @@ function downloadPsbt(b64: string, name: string) {
   downloadBytes(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), name);
 }
 
+function crc32(data: Uint8Array): number {
+  let c = ~0;
+  for (const b of data) {
+    c ^= b;
+    for (let i = 0; i < 8; i++) c = (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0);
+  }
+  return ~c >>> 0;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
+function downloadPsbtZip(files: { name: string; b64: string }[], zipName: string) {
+  const enc = new TextEncoder();
+  const locals: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = enc.encode(file.name);
+    const raw = file.b64.trim();
+    const data = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+    const crc = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(8, 0, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, name.length, true);
+    const head = new Uint8Array(local.buffer);
+    locals.push(head, name, data);
+    const cen = new DataView(new ArrayBuffer(46));
+    cen.setUint32(0, 0x02014b50, true);
+    cen.setUint16(4, 20, true);
+    cen.setUint16(6, 20, true);
+    cen.setUint32(16, crc, true);
+    cen.setUint32(20, data.length, true);
+    cen.setUint32(24, data.length, true);
+    cen.setUint16(28, name.length, true);
+    cen.setUint32(42, offset, true);
+    central.push(new Uint8Array(cen.buffer), name);
+    offset += head.length + name.length + data.length;
+  }
+  const directory = concatBytes(central);
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);
+  eocd.setUint16(8, files.length, true);
+  eocd.setUint16(10, files.length, true);
+  eocd.setUint32(12, directory.length, true);
+  eocd.setUint32(16, offset, true);
+  downloadBytes(concatBytes([...locals, directory, new Uint8Array(eocd.buffer)]), zipName);
+}
+
 function downloadSigned(value: string) {
   const raw = value.trim().replace(/\s+/g, "");
   if (/^[0-9a-fA-F]+$/.test(raw) && raw.length % 2 === 0) {
@@ -1063,6 +1434,27 @@ function spendSize(stages: Stage[], reuse: boolean, index = 0): { sigs: number; 
   const slots = describeStageSlots(stages, reuse);
   const slot = slots[index] ?? slots[0];
   return { sigs: Math.max(1, slot?.k ?? 1), keys: Math.max(1, slot?.n ?? 1) };
+}
+
+function bundleByTag<T extends { id: string; tag: string; pathIndex: number }>(rows: T[], merge: ReadonlySet<string>) {
+  const seen = new Set<string>();
+  const out: { id: string; members: T[]; tag: string; pathIndex: number }[] = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    const tag = row.tag.trim();
+    const mates = tag && merge.has(row.id)
+      ? rows.filter((r) => r.tag.trim() === tag && r.pathIndex === row.pathIndex && merge.has(r.id))
+      : [row];
+    const group = mates.length > 1 ? mates : [row];
+    for (const member of group) seen.add(member.id);
+    out.push({
+      id: group.length > 1 ? `tag:${row.pathIndex}:${tag}` : row.id,
+      members: group,
+      tag: group.length > 1 ? tag : "",
+      pathIndex: row.pathIndex,
+    });
+  }
+  return out;
 }
 
 function freshReceive(addresses: WatchAddr[], taken: Set<string>): string[] {
