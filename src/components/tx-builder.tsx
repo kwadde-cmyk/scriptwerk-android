@@ -20,6 +20,7 @@ import { useHardware } from "@/store/hardware";
 import { pickUsbKind } from "@/lib/hw/usb-kind";
 import { isHmacHex } from "@/lib/hw/address-check";
 import { useStudio } from "@/store/studio";
+import { exportBase } from "@/lib/export-name";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +37,13 @@ const NO_COINS: UtxoHit[] = [];
 const NO_ADDRS: WatchAddr[] = [];
 
 type PayRow = { id: string; address: string; amount: string };
+type TxBrief = { outs: { address: string; sats: number }[]; feeSats: number; inputs: string[] } | null;
+
+function shortAddr(address: string): string {
+  const a = address.trim();
+  if (a.length <= 18) return a || "—";
+  return `${a.slice(0, 8)}…${a.slice(-6)}`;
+}
 
 function newRow(): PayRow {
   return { id: Math.random().toString(36).slice(2, 8), address: "", amount: "" };
@@ -52,6 +60,21 @@ export function TxTab() {
   const syncRef = useRef<(merged: string) => void>(() => {});
   const clearRef = useRef<() => void>(() => {});
   const pathIndex = slots.length <= 1 ? 0 : path;
+  const [brief, setBrief] = useState<TxBrief>(null);
+  const [sentTx, setSentTx] = useState("");
+  const scanningWatch = useBitcoind((s) => s.scanningWatch);
+  const unspents = useBitcoind((s) => s.lastWatch?.unspents);
+
+  useEffect(() => {
+    if (!sentTx || scanningWatch || !brief || !unspents) return;
+    const live = new Set(unspents.map((u) => `${u.txid}:${u.vout}`));
+    if (!brief.inputs.some((id) => !live.has(id))) return;
+    signedRef.current = "";
+    setSigned("");
+    setSentTx("");
+    setBrief(null);
+    clearRef.current();
+  }, [sentTx, scanningWatch, brief, unspents]);
 
   function takeSignature(next: string): { merged: string; gained: boolean } {
     const prev = signedRef.current;
@@ -90,13 +113,31 @@ export function TxTab() {
         </div>
       ) : null}
       <Step n="1" title={t("tx.stepBuild")}>
-        <SendPane pathIndex={pathIndex} syncRef={syncRef} clearRef={clearRef} takeSignature={takeSignature} />
+        <SendPane
+          pathIndex={pathIndex}
+          syncRef={syncRef}
+          clearRef={clearRef}
+          takeSignature={takeSignature}
+          onPlan={(plan) => {
+            setSentTx("");
+            setBrief(plan ? { outs: plan.outputs, feeSats: plan.feeSats, inputs: plan.inputs.map((c) => `${c.txid}:${c.vout}`) } : null);
+          }}
+        />
       </Step>
       <Step n="2" title={t("tx.stepSign")}>
         <SignPane pathIndex={pathIndex} signed={signed} takeSignature={takeSignature} onDiscard={discard} />
       </Step>
       <Step n="3" title={t("tx.stepSend")}>
-        <BroadcastPane signed={signed} />
+        <BroadcastPane
+          signed={signed}
+          brief={brief}
+          sentTx={sentTx}
+          onSent={(id) => {
+            setSentTx(id);
+            const built = compiledForStudio(useStudio.getState());
+            if (built?.ok) void useBitcoind.getState().scanWatch(built.descriptor).catch(() => undefined);
+          }}
+        />
       </Step>
     </div>
   );
@@ -107,11 +148,13 @@ function SendPane({
   syncRef,
   clearRef,
   takeSignature,
+  onPlan,
 }: {
   pathIndex: number | null;
   syncRef: { current: (merged: string) => void };
   clearRef: { current: () => void };
   takeSignature: (next: string) => { merged: string; gained: boolean };
+  onPlan: (plan: { outputs: { address: string; sats: number }[]; feeSats: number; inputs: { txid: string; vout: number }[] } | null) => void;
 }) {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
@@ -145,6 +188,7 @@ function SendPane({
   clearRef.current = () => {
     setPsbt("");
     setError(null);
+    onPlan(null);
   };
 
   const selected = coins.filter((c) => picked.includes(`${c.txid}:${c.vout}`));
@@ -171,6 +215,7 @@ function SendPane({
     setPicked(draft);
     setOpen(false);
     setPsbt("");
+    onPlan(null);
   }
 
   async function build() {
@@ -202,6 +247,7 @@ function SendPane({
       setDustWarn(Boolean(plan.dustChange));
       const built = buildPsbt(plan, meta);
       setPsbt(built);
+      onPlan(plan);
       takeSignature(built);
     } catch (e) {
       setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.funds"));
@@ -401,6 +447,10 @@ export function RecoveryTab() {
   const [built, setBuilt] = useState<{ id: string; psbt: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [signOpen, setSignOpen] = useState(false);
+  const [sending, setSending] = useState<string | null>(null);
+  const [sent, setSent] = useState<Record<string, string>>({});
+  const nodeStatus = useBitcoind((s) => s.status);
+  const demo = useBitcoind((s) => s.demo);
   const presentSet = useMemo(() => new Set(present), [present]);
 
   const movable = useMemo(() => {
@@ -497,10 +547,100 @@ export function RecoveryTab() {
         next.push({ id: bundle.id, psbt: buildPsbt(plan, meta) });
       }
       setBuilt(next);
+      setSent({});
     } catch (e) {
       setBuilt([]);
+      setSent({});
       setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.funds"));
     }
+  }
+
+  async function broadcast(psbt: string) {
+    const hex = extractSignedTx(psbt);
+    const node = useBitcoind.getState();
+    return broadcastRawTx({ url: node.url, username: node.username, password: node.password }, hex);
+  }
+
+  async function sendOne(id: string, psbt: string) {
+    setError(null);
+    setSending(id);
+    try {
+      const txid = await broadcast(psbt);
+      setSent((cur) => ({ ...cur, [id]: txid }));
+      refreshWatch();
+    } catch (e) {
+      setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.err.broadcast"));
+    } finally {
+      setSending(null);
+    }
+  }
+
+  async function sendAll() {
+    const queue = bundles.filter((bundle) => readyIds.has(bundle.id));
+    if (!queue.length) return;
+    setError(null);
+    setSending("all");
+    let failed = "";
+    let sentAny = false;
+    for (const bundle of queue) {
+      const psbt = built.find((b) => b.id === bundle.id)?.psbt ?? "";
+      try {
+        const txid = await broadcast(psbt);
+        sentAny = true;
+        setSent((cur) => ({ ...cur, [bundle.id]: txid }));
+      } catch (e) {
+        if (!failed) failed = localizeMessage(locale, e instanceof Error ? e.message : "tx.err.broadcast");
+      }
+    }
+    setSending(null);
+    if (sentAny) refreshWatch();
+    if (failed) setError(failed);
+  }
+
+  const nodeOk = nodeStatus === "ready" && !demo;
+  const scanningWatch = useBitcoind((s) => s.scanningWatch);
+  const readyIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of built) {
+      if (sent[item.id]) continue;
+      try {
+        extractSignedTx(item.psbt);
+        ids.add(item.id);
+      } catch {
+        /* still unsigned */
+      }
+    }
+    return ids;
+  }, [built, sent]);
+
+  const liveIds = bundles.map((b) => b.id).join("|");
+  useEffect(() => {
+    if (scanningWatch) return;
+    const live = new Set(liveIds ? liveIds.split("|") : []);
+    setSent((cur) => {
+      const ids = Object.keys(cur);
+      if (!ids.some((id) => !live.has(id))) return cur;
+      const next: Record<string, string> = {};
+      for (const id of ids) if (live.has(id) && cur[id]) next[id] = cur[id];
+      return next;
+    });
+  }, [liveIds, scanningWatch]);
+
+  function refreshWatch() {
+    if (!compiled?.ok) return;
+    void useBitcoind.getState().scanWatch(compiled.descriptor).catch(() => undefined);
+  }
+
+  let readyOut = 0;
+  let readyFee = 0;
+  for (const bundle of bundles) {
+    if (!readyIds.has(bundle.id)) continue;
+    const size = spendSize(stages, reuse, bundle.pathIndex);
+    const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest || ""], sigs: size.sigs, keys: size.keys });
+    const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
+    const total = bundle.members.reduce((sum, m) => sum + btcToSats(m.coin.amount), 0);
+    readyOut += Math.max(0, total - feeSats);
+    readyFee += feeSats;
   }
 
   const sample = bundles[0];
@@ -630,15 +770,59 @@ export function RecoveryTab() {
               <p className="text-xs text-fg-muted">
                 <AmountInline btc={outSats / 1e8} /> · {t("tx.feeHint", { vb: String(vb), sats: String(feeSats) })}
               </p>
+              {psbt && (readyIds.has(bundle.id) || sent[bundle.id]) ? (
+                <p className="text-xs text-fg">
+                  <AmountInline btc={outSats / 1e8} />
+                  <span className="text-fg-muted"> → </span>
+                  <span className="font-mono">{shortAddr(bundle.dest)}</span>
+                  <span className="text-fg-muted">
+                    {" "}
+                    · {feeSats.toLocaleString(numberLocale(locale))} sat
+                    {slots[bundle.pathIndex] ? ` · ${t("wallet.stageChip", { n: slots[bundle.pathIndex].index })}` : ""}
+                  </span>
+                </p>
+              ) : null}
               {psbt ? <SigStatus psbt={psbt} pathIndex={bundle.pathIndex} /> : null}
+              {psbt ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {sent[bundle.id] ? (
+                    <span className="inline-flex min-w-0 items-center gap-1 text-xs text-ok">
+                      {t("tx.sent")}
+                      <span className="truncate font-mono text-2xs text-fg-muted">{sent[bundle.id]!.slice(0, 10)}…</span>
+                      <CopyButton value={sent[bundle.id]!} label={t("tx.copyTxid")} />
+                    </span>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!readyIds.has(bundle.id) || !nodeOk || sending != null}
+                      onClick={() => void sendOne(bundle.id, psbt)}
+                    >
+                      {sending === bundle.id ? t("tx.sending") : t("rec.send")}
+                    </Button>
+                  )}
+                </div>
+              ) : null}
             </li>
           );
         })}
       </ul>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button type="button" onClick={() => void buildAll()} disabled={!bundles.length}>{t("rec.buildN", { n: bundles.length })}</Button>
         <Button type="button" variant="outline" disabled={!built.length} onClick={() => setSignOpen(true)}>{t("rec.signAll")}</Button>
+        <Button type="button" variant="outline" disabled={!readyIds.size || !nodeOk || sending != null} onClick={() => void sendAll()}>
+          {sending === "all" ? t("tx.sending") : t("rec.sendAll")}
+        </Button>
+        {readyIds.size ? (
+          <span className="text-xs text-fg-muted">
+            {t("rec.readyN", { n: readyIds.size, fee: readyFee.toLocaleString(numberLocale(locale)) })}
+            {" · "}
+            <AmountInline btc={readyOut / 1e8} />
+          </span>
+        ) : null}
       </div>
+      {built.length && !nodeOk ? <p className="text-xs text-fg-muted">{t("tx.needNode")}</p> : null}
       <RecoverySignDialog
         open={signOpen}
         onOpenChange={setSignOpen}
@@ -650,7 +834,15 @@ export function RecoveryTab() {
             : `${bundle.members[0]?.coin.txid.slice(0, 10) ?? ""}…:${bundle.members[0]?.coin.vout ?? ""}`;
           return [{ id: bundle.id, psbt, pathIndex: bundle.pathIndex, title }];
         })}
-        onUpdate={(id, psbt) => setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt } : b)))}
+        onUpdate={(id, psbt) => {
+          setBuilt((cur) => cur.map((b) => (b.id === id ? { ...b, psbt } : b)));
+          setSent((cur) => {
+            if (!cur[id]) return cur;
+            const next = { ...cur };
+            delete next[id];
+            return next;
+          });
+        }}
       />
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
     </div>
@@ -896,7 +1088,7 @@ function RecoverySignDialog({
                               name: `${String(i + 1).padStart(2, "0")}-${item.id.replace(":", "-")}.psbt`,
                               b64: item.psbt,
                             })),
-                            `scriptwerk-${keyName || "recovery"}.zip`,
+                            `${exportBase(useStudio.getState().policyName)}-${keyName || "recovery"}.zip`,
                           )
                         }
                       >
@@ -988,7 +1180,7 @@ function SignPane({
       <div className="space-y-2">
         <p className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("tx.export")}</p>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" disabled={!ready} onClick={() => downloadPsbt(signed, "scriptwerk-send.psbt")}>{t("tx.psbt")}</Button>
+          <Button type="button" variant="outline" disabled={!ready} onClick={() => downloadPsbt(signed, `${exportBase(useStudio.getState().policyName)}-send.psbt`)}>{t("tx.psbt")}</Button>
           <Button type="button" variant="outline" disabled={!ready} onClick={() => setExportQr((v) => !v)}>{t("tx.exportQr")}</Button>
           <Tip label={t("tx.discard")}>
             <Button
@@ -1051,23 +1243,31 @@ function SignPane({
   );
 }
 
-function BroadcastPane({ signed }: { signed: string }) {
+function BroadcastPane({
+  signed,
+  brief,
+  sentTx,
+  onSent,
+}: {
+  signed: string;
+  brief: TxBrief;
+  sentTx: string;
+  onSent: (txid: string) => void;
+}) {
   const { t, locale } = useT();
   const status = useBitcoind((s) => s.status);
   const demo = useBitcoind((s) => s.demo);
-  const [txid, setTxid] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function send() {
     setError(null);
-    setTxid("");
     setSending(true);
     try {
       const hex = extractSignedTx(signed);
       const node = useBitcoind.getState();
       const id = await broadcastRawTx({ url: node.url, username: node.username, password: node.password }, hex);
-      setTxid(id);
+      onSent(id);
     } catch (e) {
       setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.err.broadcast"));
     } finally {
@@ -1077,23 +1277,38 @@ function BroadcastPane({ signed }: { signed: string }) {
 
   return (
     <div className="space-y-2">
-      <p className="text-2xs text-pretty text-fg-muted">{t("tx.signedBlurb")}</p>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => void send()} disabled={sending || !signed.trim() || status !== "ready" || demo}>
-          {sending ? t("tx.sending") : t("tx.broadcast")}
-        </Button>
+      {brief && signed.trim() ? (
+        <div className="space-y-1 text-xs">
+          {brief.outs.map((o) => (
+            <p key={`${o.address}:${o.sats}`}>
+              <AmountInline btc={o.sats / 1e8} />
+              <span className="text-fg-muted"> → </span>
+              <span className="font-mono">{shortAddr(o.address)}</span>
+            </p>
+          ))}
+          <p className="text-fg-muted">{brief.feeSats.toLocaleString(numberLocale(locale))} sat</p>
+        </div>
+      ) : (
+        <p className="text-2xs text-pretty text-fg-muted">{t("tx.signedBlurb")}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {sentTx ? (
+          <span className="inline-flex min-w-0 items-center gap-1 text-xs text-ok">
+            {t("tx.sent")}
+            <span className="truncate font-mono text-2xs text-fg-muted">{sentTx.slice(0, 10)}…</span>
+            <CopyButton value={sentTx} label={t("tx.copyTxid")} />
+          </span>
+        ) : (
+          <Button type="button" onClick={() => void send()} disabled={sending || !signed.trim() || status !== "ready" || demo}>
+            {sending ? t("tx.sending") : t("tx.broadcast")}
+          </Button>
+        )}
         <Button type="button" variant="outline" disabled={!signed.trim()} onClick={() => downloadSigned(signed)}>
           {t("tx.saveFile")}
         </Button>
       </div>
       {status !== "ready" || demo ? <p className="text-xs text-fg-muted">{t("tx.needNode")}</p> : null}
       {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
-      {txid ? (
-        <div className="flex items-start gap-1">
-          <p className="min-w-0 flex-1 break-all font-mono text-xs">{txid}</p>
-          <CopyButton value={txid} label={t("tx.copyTxid")} />
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1301,15 +1516,16 @@ function downloadPsbtZip(files: { name: string; b64: string }[], zipName: string
 }
 
 function downloadSigned(value: string) {
+  const base = exportBase(useStudio.getState().policyName);
   const raw = value.trim().replace(/\s+/g, "");
   if (/^[0-9a-fA-F]+$/.test(raw) && raw.length % 2 === 0) {
     const bytes = new Uint8Array(raw.length / 2);
     for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(raw.slice(i * 2, i * 2 + 2), 16);
     const psbt = raw.toLowerCase().startsWith("70736274");
-    downloadBytes(bytes, psbt ? "scriptwerk-signed.psbt" : "scriptwerk-signed.txn");
+    downloadBytes(bytes, psbt ? `${base}-signed.psbt` : `${base}-signed.txn`);
     return;
   }
-  downloadPsbt(raw, "scriptwerk-signed.psbt");
+  downloadPsbt(raw, `${base}-signed.psbt`);
 }
 
 function rowSats(row: PayRow): number {
@@ -1382,7 +1598,7 @@ async function walletMeta(descriptor: string, list: WatchAddr[], inputs: string[
 }
 
 function suggestChange(addresses: WatchAddr[], avoid: Set<string>): WatchAddr | null {
-  return addresses.find((a) => a.kind === "change" && a.coins === 0 && a.address && !avoid.has(a.address)) ?? null;
+  return addresses.find((a) => a.kind === "change" && a.coins === 0 && !a.used && a.address && !avoid.has(a.address)) ?? null;
 }
 
 function avoidSet(coins: UtxoHit[], rows: PayRow[]): Set<string> {
@@ -1446,7 +1662,7 @@ function freshReceive(addresses: WatchAddr[], taken: Set<string>): string[] {
   const used = new Set(taken);
   const out: string[] = [];
   for (const a of addresses) {
-    if (a.kind !== "receive" || a.coins > 0) continue;
+    if (a.kind !== "receive" || a.coins > 0 || a.used) continue;
     if (used.has(a.address)) continue;
     used.add(a.address);
     out.push(a.address);

@@ -1225,7 +1225,7 @@ describe("ledger address check helpers", () => {
     const merged = mergeWatchSnapshots(snap, {
       ...snap,
       scanned: 40,
-      addresses: [{ address: "bc1qcc", kind: "receive", index: 20, amount: 0, coins: 0 }],
+      addresses: [{ address: "bc1qcc", kind: "receive", index: 20, amount: 0, coins: 0, used: false }],
       unspents: [{ txid: "cc", vout: 0, amount: 0.2, height: 790000, desc: "", address: "bc1qcc" }],
     });
     assert.equal(merged.addresses.length, 3);

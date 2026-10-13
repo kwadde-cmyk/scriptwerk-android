@@ -265,6 +265,7 @@ export interface WatchAddr {
   index: number;
   amount: number;
   coins: number;
+  used: boolean;
 }
 
 export interface WatchSnapshot {
@@ -282,7 +283,7 @@ export interface WatchSnapshot {
 
 export function buildWatchSnapshot(opts: {
   height: number;
-  addresses: { address: string; kind: AddressKind; index: number }[];
+  addresses: { address: string; kind: AddressKind; index: number; used?: boolean }[];
   unspents: UtxoHit[];
   scanned: number;
   checksum?: string;
@@ -314,6 +315,7 @@ export function buildWatchSnapshot(opts: {
       index: a.index,
       amount: hit?.amount ?? 0,
       coins: hit?.coins ?? 0,
+      used: Boolean(a.used),
     });
   }
   return {

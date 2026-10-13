@@ -625,10 +625,11 @@ export async function scanWatchWallet(
   );
   const fromCore = ranged.every((g) => g.addresses?.length);
   const res = await electrumLookup(ranged, opts.electrum ?? "");
-  const labeled: { address: string; kind: AddressKind; index: number }[] = [];
+  const labeled: { address: string; kind: AddressKind; index: number; used: boolean }[] = [];
   specs.forEach((spec, i) => {
     const list = fromCore ? ranged[i]!.addresses ?? [] : res.groups[i] ?? [];
-    list.forEach((address, n) => labeled.push({ address, kind: spec.kind, index: from + n }));
+    const flags = res.used[i] ?? [];
+    list.forEach((address, n) => labeled.push({ address, kind: spec.kind, index: from + n, used: Boolean(flags[n]) }));
   });
   let coreMatch: boolean | undefined = fromCore ? true : undefined;
   if (!fromCore) {

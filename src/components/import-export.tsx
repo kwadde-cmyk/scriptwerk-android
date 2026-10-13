@@ -31,6 +31,7 @@ import { useHardware } from "@/store/hardware";
 import { useT } from "@/lib/use-t";
 import { Download, FolderOpen, QrCode, Redo2, RotateCcw, Undo2, Usb } from "lucide-react";
 import { toast } from "sonner";
+import { exportBase } from "@/lib/export-name";
 
 export function ImportExportBar() {
   const { t } = useT();
@@ -81,12 +82,13 @@ export function ImportExportBar() {
       toast.error(compiled?.error ?? t("export.none"));
       return;
     }
-    download("scriptwerk.keys.txt", formatKeyList(keys));
-    download("scriptwerk.miniscript.txt", `${compiled.miniscript}\n`);
-    download("scriptwerk.descriptor.txt", `${compiled.descriptor}\n`);
-    download("scriptwerk.bsms", `${bsmsRecord(compiled.descriptor)}\n`);
+    const base = exportBase(walletName);
+    download(`${base}.keys.txt`, formatKeyList(keys));
+    download(`${base}.miniscript.txt`, `${compiled.miniscript}\n`);
+    download(`${base}.descriptor.txt`, `${compiled.descriptor}\n`);
+    download(`${base}.bsms`, `${bsmsRecord(compiled.descriptor)}\n`);
     download(
-      "wallet.json",
+      base === "scriptwerk" ? "wallet.json" : `${base}-wallet.json`,
       formatScriptwerkJson({
         name: walletName,
         miniscript: compiled.miniscript,
@@ -106,7 +108,7 @@ export function ImportExportBar() {
         origin: compiled.descriptor || undefined,
       }),
     );
-    if (labelBody) download("scriptwerk-labels.jsonl", labelBody);
+    if (labelBody) download(`${base}-labels.jsonl`, labelBody);
     toast.success(t("export.ok"));
   }
 

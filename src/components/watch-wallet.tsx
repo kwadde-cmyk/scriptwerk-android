@@ -15,8 +15,10 @@ import { useBitcoind } from "@/store/bitcoind";
 import { useStudio } from "@/store/studio";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { CopyButton } from "@/components/copy-button";
 import { AddressLine } from "@/components/address-qr";
 import { AmountInline, AmountText } from "@/components/amount";
@@ -26,7 +28,8 @@ import { useT } from "@/lib/use-t";
 import { localizeMessage, numberLocale } from "@/lib/i18n";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, Clock, Download, Lock, Tag, Unlock } from "lucide-react";
-import { PolicyNameHeading, usePolicyTitle } from "@/components/policy-title";
+import { PolicyNameHeading } from "@/components/policy-title";
+import { exportBase } from "@/lib/export-name";
 import { cn } from "@/lib/utils";
 
 type CoinSort = "age" | "size" | "addr" | "tag";
@@ -117,7 +120,7 @@ export function UtxoLoadCard({ bare = false }: { bare?: boolean }) {
 export function WatchWalletPanel() {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
-  const { name: titleName } = usePolicyTitle();
+  const policyName = useStudio((s) => s.policyName);
   const compiled = useStudio(compiledForStudio);
   const stages = useStudio((s) => s.stages);
   const reuseKeys = useStudio((s) => s.reuseKeys);
@@ -129,6 +132,7 @@ export function WatchWalletPanel() {
   const [labelAsk, setLabelAsk] = useState<{ text: string; names: string[] } | null>(null);
   const [sort, setSort] = useState<CoinSort>("age");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [spentOpen, setSpentOpen] = useState(false);
 
   const descriptor = compiled?.ok ? compiled.descriptor : "";
   const checksum = descriptor ? checksumOf(descriptor) : "";
@@ -193,8 +197,10 @@ export function WatchWalletPanel() {
     setSortDir(id === "size" ? "desc" : "asc");
   }
 
-  const used = snap?.addresses.filter((a) => a.coins > 0) ?? [];
-  const unused = (snap?.addresses.filter((a) => a.coins === 0) ?? []).slice(0, 8);
+  const funded = snap?.addresses.filter((a) => a.coins > 0) ?? [];
+  const spent = snap?.addresses.filter((a) => a.used && a.coins === 0) ?? [];
+  const freshAll = snap?.addresses.filter((a) => !a.used && a.coins === 0) ?? [];
+  const fresh = freshAll.slice(0, 8);
   const coinsByAddr = useMemo(() => {
     const map = new Map<string, UtxoHit[]>();
     for (const u of snap?.unspents ?? []) {
@@ -223,7 +229,7 @@ export function WatchWalletPanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${titleName.replace(/\s+/g, "-").toLowerCase()}-labels.jsonl`;
+    a.download = `${exportBase(policyName)}-labels.jsonl`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success(t("wallet.bip329Exported", { n: records.length }));
@@ -368,9 +374,45 @@ export function WatchWalletPanel() {
 
       {snap?.addresses.length ? (
         <section>
-          <h3 className="mb-2 text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.addrs")}</h3>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.addrs")}</h3>
+            {spent.length ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => setSpentOpen(true)}>
+                {t("wallet.spentBtn", { n: spent.length })}
+              </Button>
+            ) : null}
+          </div>
+          <Dialog open={spentOpen} onOpenChange={setSpentOpen}>
+            <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden">
+              <DialogHeader>
+                <DialogTitle>{t("wallet.spentTitle")}</DialogTitle>
+              </DialogHeader>
+              <ScrollArea className="max-h-[min(28rem,calc(85vh-8rem))]">
+                {spent.length ? (
+                  <ul className="space-y-1 pr-3">
+                    {spent.map((a) => (
+                      <AddrRow
+                        key={a.address}
+                        kind={t(`wallet.${a.kind}`)}
+                        index={a.index}
+                        address={a.address}
+                        amount={0}
+                        coins={[]}
+                        height={snap.height}
+                        funded={false}
+                        label={labelText(labels, "addr", a.address)}
+                        labels={labels}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-fg-muted">{t("wallet.spentEmpty")}</p>
+                )}
+              </ScrollArea>
+            </DialogContent>
+          </Dialog>
           <ul className="space-y-1">
-            {used.map((a) => (
+            {funded.map((a) => (
               <AddrRow
                 key={a.address}
                 kind={t(`wallet.${a.kind}`)}
@@ -379,11 +421,12 @@ export function WatchWalletPanel() {
                 amount={a.amount}
                 coins={coinsByAddr.get(a.address) ?? []}
                 height={snap.height}
-                used
+                funded
                 label={labelText(labels, "addr", a.address)}
+                labels={labels}
               />
             ))}
-            {unused.map((a) => (
+            {fresh.map((a) => (
               <AddrRow
                 key={a.address}
                 kind={t(`wallet.${a.kind}`)}
@@ -392,14 +435,15 @@ export function WatchWalletPanel() {
                 amount={0}
                 coins={[]}
                 height={snap.height}
-                used={false}
+                funded={false}
                 label={labelText(labels, "addr", a.address)}
+                labels={labels}
               />
             ))}
           </ul>
-          {snap.addresses.length > used.length + unused.length ? (
+          {freshAll.length > fresh.length ? (
             <p className="mt-1 text-2xs text-fg-subtle">
-              {t("wallet.moreAddrs", { n: snap.addresses.length - used.length - unused.length })}
+              {t("wallet.moreAddrs", { n: freshAll.length - fresh.length })}
             </p>
           ) : null}
         </section>
@@ -529,6 +573,10 @@ function CoinRow({
   );
 }
 
+function utxoTag(labels: Parameters<typeof labelText>[0], u: UtxoHit): string {
+  return (labelText(labels, "output", `${u.txid}:${u.vout}`) || labelText(labels, "tx", u.txid)).trim();
+}
+
 function AddrRow({
   kind,
   index,
@@ -536,8 +584,9 @@ function AddrRow({
   amount,
   coins,
   height,
-  used,
+  funded,
   label,
+  labels,
 }: {
   kind: string;
   index: number;
@@ -545,8 +594,9 @@ function AddrRow({
   amount: number;
   coins: UtxoHit[];
   height: number;
-  used: boolean;
+  funded: boolean;
   label: string;
+  labels: Parameters<typeof labelText>[0];
 }) {
   const { t } = useT();
   return (
@@ -556,7 +606,7 @@ function AddrRow({
             <span className="text-2xs text-fg-muted">
               {kind} {index}
             </span>
-            {used ? (
+            {funded ? (
               <Badge variant="ok">
                 {t("wallet.sum")}: <AmountText btc={amount} className="tabular-nums" />
               </Badge>
@@ -574,8 +624,15 @@ function AddrRow({
         <ul className="mt-1.5 space-y-0.5 border-t border-border pt-1.5">
           {coins.map((u) => {
             const conf = u.height > 0 && height > 0 ? Math.max(0, height - u.height + 1) : 0;
+            const tag = utxoTag(labels, u);
             return (
               <li key={`${u.txid}:${u.vout}`} className="flex items-center gap-2 text-2xs text-fg-muted">
+                {tag ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 text-fg">
+                    <Tag className="size-3 text-fg-muted" />
+                    {tag}
+                  </span>
+                ) : null}
                 <AmountText btc={u.amount} />
                 <span className="shrink-0">{conf ? `${conf} conf` : t("wallet.unconf")}</span>
                 <span className="flex min-w-0 flex-1 font-mono">
