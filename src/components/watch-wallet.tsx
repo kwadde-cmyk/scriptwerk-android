@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 
 type CoinSort = "age" | "size" | "addr" | "tag";
 
-export function UtxoLoadCard() {
+export function UtxoLoadCard({ bare = false }: { bare?: boolean }) {
   const { t, locale } = useT();
   const nloc = numberLocale(locale);
   const unit = useStudio((s) => s.amountUnit);
@@ -71,8 +71,8 @@ export function UtxoLoadCard() {
   }
 
   return (
-    <section className="space-y-2">
-      <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.coins")}</h2>
+    <div className="space-y-2">
+      {bare ? null : <h2 className="text-2xs font-medium tracking-[0.14em] text-fg-subtle uppercase">{t("wallet.coins")}</h2>}
       {!canScan ? (
         <div className="space-y-2">
           <p className="text-xs text-fg-muted">{demo ? t("wallet.noDemo") : t("wallet.needElectrum")}</p>
@@ -95,7 +95,7 @@ export function UtxoLoadCard() {
             />
           </div>
           <Button type="button" disabled={scanningWatch || !compiled?.ok} onClick={() => void run()}>
-            {scanningWatch ? t("wallet.working") : t("wallet.refresh")}
+            {scanningWatch ? t("wallet.working") : t("hw.utxo.run")}
           </Button>
         </div>
       )}
@@ -106,11 +106,11 @@ export function UtxoLoadCard() {
         <p className="text-2xs text-fg-muted">
           {t("spend.utxoCount", { n: snap.unspents.length })}
         </p>
-      ) : (
+      ) : bare ? null : (
         <p className="text-2xs text-fg-muted">{t("wallet.needScan")}</p>
       )}
       {error ? <p className="text-2xs text-danger">{error}</p> : null}
-    </section>
+    </div>
   );
 }
 
@@ -291,9 +291,10 @@ export function WatchWalletPanel() {
         ) : (
           <p className="mt-1 text-2xs text-fg-muted">{t("wallet.needScan")}</p>
         )}
+        <div className="mt-3 border-t border-border pt-3">
+          <UtxoLoadCard bare />
+        </div>
       </section>
-
-      <p className="text-2xs text-fg-muted">{t("wallet.loadOnCreate")}</p>
 
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-2">

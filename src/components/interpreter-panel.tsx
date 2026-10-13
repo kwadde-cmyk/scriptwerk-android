@@ -25,7 +25,7 @@ import { Check, Copy, Search } from "lucide-react";
 import { useMemo, useState, memo, type ReactNode } from "react";
 import { toast } from "sonner";
 import { NodeCheckCard } from "@/components/node-rpc";
-import { WatchWalletPanel, UtxoLoadCard } from "@/components/watch-wallet";
+import { WatchWalletPanel } from "@/components/watch-wallet";
 import { RecoveryTab, TxTab } from "@/components/tx-builder";
 import { ScriptHighlight } from "@/components/script-view";
 
@@ -126,7 +126,6 @@ export const InterpreterPanel = memo(function InterpreterPanel({ toolbarStart }:
             <ScriptPeek title="Descriptor (wsh)" value={descriptorText} />
             <ScriptPeek title="BSMS" value={compiled?.ok ? bsmsRecord(compiled.descriptor) : ""} />
             <NodeCheckCard />
-            <UtxoLoadCard />
           </div>
         </ScrollArea>
       </TabsContent>

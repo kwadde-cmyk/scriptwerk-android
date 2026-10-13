@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import jsQR from "jsqr";
-import { createQrVideo } from "@/lib/tx/qr-video";
+import { createQrVideo, qrVideoPlayer } from "@/lib/tx/qr-video";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Camera, FileUp, ImageUp } from "lucide-react";
@@ -9,39 +9,88 @@ import { useT } from "@/lib/use-t";
 
 export function QrPreview({ value, label, compact }: { value: string; label: string; compact?: boolean }) {
   const { t } = useT();
-  const [src, setSrc] = useState<string | null>(null);
+  const [still, setStill] = useState<string | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [videoNote, setVideoNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [big, setBig] = useState(false);
-  const box = compact ? 160 : 360;
-  const cls = compact ? "size-40" : "size-[22.5rem]";
+  const [mode, setMode] = useState<"still" | "video">("still");
+  const box = compact ? 220 : 360;
+  const cls = compact ? "size-56" : "size-[22.5rem]";
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    setSrc(null);
+    setStill(null);
     if (!value) {
       setError(t("qr.none"));
       return;
     }
-    QRCode.toDataURL(value, {
-      errorCorrectionLevel: value.length > 800 ? "L" : "M",
-      margin: 1,
-      width: compact ? 640 : 880,
-      color: { dark: "#0b0c0e", light: "#ffffff" },
-    })
+    QRCode.toDataURL(value, qrOpts(value.length > 800, compact))
       .then((url) => {
-        if (!cancelled) setSrc(url);
+        if (!cancelled) setStill(url);
       })
       .catch(() => {
-        if (!cancelled) setError(t("qr.long"));
+        if (!cancelled && mode === "still") setError(t("qr.long"));
       });
     return () => {
       cancelled = true;
     };
   }, [value, t, compact]);
 
+  useEffect(() => {
+    if (mode !== "video") return;
+    let stop = false;
+    let timer = 0;
+    let busy = false;
+    setVideoSrc(null);
+    setVideoNote(null);
+    setError(null);
+    void (async () => {
+      try {
+        const player = await qrVideoPlayer(value);
+        let n = 0;
+        const paint = async () => {
+          if (stop || busy) return;
+          busy = true;
+          const part = player.next();
+          n += 1;
+          const ur = part.match(/\/(\d+)-(\d+)\//);
+          const specter = part.match(/^p(\d+)of(\d+)/i);
+          const note = ur ? `${ur[1]}/${ur[2]}` : specter ? `${specter[1]}/${specter[2]}` : `${n}/${player.parts}`;
+          setVideoNote(note);
+          try {
+            const url = await QRCode.toDataURL(part, qrOpts(true, compact));
+            if (!stop) setVideoSrc(url);
+          } finally {
+            busy = false;
+          }
+        };
+        await paint();
+        if (!stop) timer = window.setInterval(() => void paint(), 500);
+      } catch {
+        if (!stop) setError(t("qr.long"));
+      }
+    })();
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [mode, value, compact, t]);
+
+  const src = mode === "video" ? videoSrc : still;
+
   return (
     <div className="flex flex-col items-center gap-3">
+      <div className="flex gap-1">
+        <Button type="button" size="sm" variant={mode === "still" ? "default" : "outline"} onClick={() => setMode("still")}>
+          {t("qr.still")}
+        </Button>
+        <Button type="button" size="sm" variant={mode === "video" ? "default" : "outline"} onClick={() => setMode("video")}>
+          {t("qr.video")}
+        </Button>
+      </div>
+      {mode === "video" && videoNote ? <p className="font-mono text-sm text-fg">{videoNote}</p> : null}
       {src ? (
         <button
           type="button"
@@ -61,14 +110,14 @@ export function QrPreview({ value, label, compact }: { value: string; label: str
         <div
           className={
             compact
-              ? "flex size-40 items-center justify-center rounded-lg border border-border bg-surface text-xs text-fg-muted"
+              ? "flex size-56 items-center justify-center rounded-lg border border-border bg-surface text-xs text-fg-muted"
               : "flex size-[22.5rem] items-center justify-center rounded-lg border border-border bg-surface text-xs text-fg-muted"
           }
         >
           {error ?? t("qr.building")}
         </div>
       )}
-      {error ? <p className="text-xs text-danger">{error}</p> : null}
+      {error && mode === "still" ? <p className="text-xs text-danger">{error}</p> : null}
       <Dialog open={big} onOpenChange={setBig}>
         <DialogContent className="flex w-[min(32rem,calc(100vw-1.5rem))] flex-col items-center gap-3 p-4">
           <DialogTitle className="sr-only">{label}</DialogTitle>
@@ -79,6 +128,15 @@ export function QrPreview({ value, label, compact }: { value: string; label: str
       </Dialog>
     </div>
   );
+}
+
+function qrOpts(low: boolean, compact?: boolean) {
+  return {
+    errorCorrectionLevel: low ? ("L" as const) : ("M" as const),
+    margin: 1,
+    width: compact ? 720 : 880,
+    color: { dark: "#0b0c0e", light: "#ffffff" },
+  };
 }
 
 export function QrScanner({ onRead, video = false }: { onRead: (text: string) => void; video?: boolean }) {

@@ -485,7 +485,7 @@ export function NodeCheckCard() {
           <p className="pt-1.5 text-xs text-fg-muted">{demo ? t("node.demoOn") : t("node.connected")}</p>
           {checkBtn}
         </div>
-        {lastCheck ? <CheckResult bare /> : null}
+        {lastCheck ? <CheckResult bare utxo={false} /> : null}
         <DeriveAddressBox />
       </div>
     </section>
@@ -741,7 +741,7 @@ function DeriveAddressBox() {
   );
 }
 
-function CheckResult({ bare = false }: { bare?: boolean }) {
+function CheckResult({ bare = false, utxo = true }: { bare?: boolean; utxo?: boolean }) {
   const { t } = useT();
   const lastCheck = useBitcoind((s) => s.lastCheck);
   const status = useBitcoind((s) => s.status);
@@ -791,10 +791,12 @@ function CheckResult({ bare = false }: { bare?: boolean }) {
           {t("node.deriveSkip")}: {lastCheck.deriveError}
         </p>
       ) : null}
+      {utxo ? (
       <UtxoScanPanel
         enabled={utxoOn}
         hint={utxoOn ? t("hw.utxo.blurb") : t("hw.utxo.needCheck")}
       />
+      ) : null}
     </>
   );
   if (bare) return <div className="space-y-0">{body}</div>;

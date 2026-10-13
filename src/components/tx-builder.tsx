@@ -384,8 +384,6 @@ export function RecoveryTab() {
   const labels = useStudio((s) => s.labels);
   const compiled = useStudio(compiledForStudio);
   const watch = useBitcoind((s) => s.lastWatch);
-  const nodeStatus = useBitcoind((s) => s.status);
-  const demo = useBitcoind((s) => s.demo);
   const snap = watch && compiled?.ok && watch.checksum === checksumOf(compiled.descriptor) ? watch : null;
   const probe = useBitcoind((s) => s.probe);
   const tip = probe?.blocks && probe.chain !== "demo" ? probe.blocks : snap?.height ?? 0;
@@ -401,7 +399,6 @@ export function RecoveryTab() {
   const [feeAbs, setFeeAbs] = useState("");
   const [feeSource, setFeeSource] = useState<"rate" | "abs">("rate");
   const [built, setBuilt] = useState<{ id: string; psbt: string }[]>([]);
-  const [txids, setTxids] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [signOpen, setSignOpen] = useState(false);
   const presentSet = useMemo(() => new Set(present), [present]);
@@ -412,18 +409,22 @@ export function RecoveryTab() {
       const status = evaluateCoinStatus({ height: coin.height, tip, stages, reuse, root });
       const open = openPathIndexes(status.paths);
       if (!open.length) return [];
-      return [{ id: `${coin.txid}:${coin.vout}`, coin, open, tag: coinLabel(labels, coin.txid, coin.vout, coin.address) }];
+      return [{ id: `${coin.txid}:${coin.vout}`, coin, open, paths: status.paths, tag: coinLabel(labels, coin.txid, coin.vout, coin.address) }];
     });
   }, [snap, tip, stages, reuse, root, labels]);
 
   const visible = useMemo(
-    () => movable.filter((c) => inScope(c.open, scope, stageIndex)),
-    [movable, scope, stageIndex],
+    () => movable.filter((c) => (scope === "open" ? noTimelock(c.open, slots) : inScope(c.open, "stage", stageIndex) || noTimelock(c.open, slots))),
+    [movable, scope, stageIndex, slots],
   );
 
   useEffect(() => {
     if (drive === "keys") {
-      const next = coinsForPresent(movable, needs, presentSet, scope, stageIndex);
+      const pool = movable.filter((c) => visible.some((v) => v.id === c.id));
+      const bare = scope === "stage"
+        ? coinsForPresent(pool.filter((c) => noTimelock(c.open, slots)), needs, presentSet, "open", null)
+        : [];
+      const next = [...new Set([...coinsForPresent(pool, needs, presentSet, scope, stageIndex), ...bare])];
       setPicked((cur) => (cur.length === next.length && cur.every((id, i) => id === next[i]) ? cur : next));
       return;
     }
@@ -431,7 +432,7 @@ export function RecoveryTab() {
       const next = cur.filter((id) => visible.some((c) => c.id === id));
       return next.length === cur.length && next.every((id, i) => id === cur[i]) ? cur : next;
     });
-  }, [drive, movable, needs, presentSet, scope, stageIndex, visible]);
+  }, [drive, movable, needs, presentSet, scope, stageIndex, visible, slots]);
 
   function onKeys(names: string[]) {
     setPresent(names);
@@ -496,22 +497,9 @@ export function RecoveryTab() {
         next.push({ id: bundle.id, psbt: buildPsbt(plan, meta) });
       }
       setBuilt(next);
-      setTxids({});
     } catch (e) {
       setBuilt([]);
       setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.funds"));
-    }
-  }
-
-  async function sendOne(id: string, psbt: string) {
-    setError(null);
-    try {
-      const hex = extractSignedTx(psbt);
-      const node = useBitcoind.getState();
-      const txid = await broadcastRawTx({ url: node.url, username: node.username, password: node.password }, hex);
-      setTxids((cur) => ({ ...cur, [id]: txid }));
-    } catch (e) {
-      setError(localizeMessage(locale, e instanceof Error ? e.message : "tx.err.broadcast"));
     }
   }
 
@@ -585,6 +573,10 @@ export function RecoveryTab() {
                     <span className="block text-2xs text-fg-subtle">
                       {row.open.map((i) => slots[i] ? `${slots[i].quorum} · ${lockWhen(slots[i].lock, slots[i].delay, locale)}` : "").filter(Boolean).join(" · ")}
                     </span>
+                    {scope === "stage" && noTimelock(row.open, slots) ? (() => {
+                      const next = row.paths.filter((p) => !p.open && p.blocksLeft > 0).sort((a, b) => a.blocksLeft - b.blocksLeft)[0];
+                      return next ? <span className="mt-0.5 block text-2xs text-fg-muted">{t("rec.nextLock", { n: next.index, m: next.blocksLeft })}</span> : null;
+                    })() : null}
                   </span>
                   <AmountInline btc={row.coin.amount} />
                 </button>
@@ -638,29 +630,14 @@ export function RecoveryTab() {
               <p className="text-xs text-fg-muted">
                 <AmountInline btc={outSats / 1e8} /> · {t("tx.feeHint", { vb: String(vb), sats: String(feeSats) })}
               </p>
-              {psbt ? (
-                <PsbtExport value={psbt} name={`scriptwerk-${bundle.id.replace(/[:]/g, "-")}.psbt`} extra={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={nodeStatus !== "ready" || demo}
-                    onClick={() => void sendOne(bundle.id, psbt)}
-                  >
-                    {t("rec.broadcast")}
-                  </Button>
-                } />
-              ) : (
-                <span className="text-2xs text-fg-muted">{t("tx.buildEach")}</span>
-              )}
               {psbt ? <SigStatus psbt={psbt} pathIndex={bundle.pathIndex} /> : null}
-              {txids[bundle.id] ? <p className="break-all font-mono text-2xs">{txids[bundle.id]}</p> : null}
             </li>
           );
         })}
       </ul>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => void buildAll()} disabled={!bundles.length}>{t("tx.buildEach")}</Button>
-        <Button type="button" variant="outline" disabled={!built.length} onClick={() => setSignOpen(true)}>{t("rec.sign")}</Button>
+        <Button type="button" onClick={() => void buildAll()} disabled={!bundles.length}>{t("rec.buildN", { n: bundles.length })}</Button>
+        <Button type="button" variant="outline" disabled={!built.length} onClick={() => setSignOpen(true)}>{t("rec.signAll")}</Button>
       </div>
       <RecoverySignDialog
         open={signOpen}
@@ -834,11 +811,13 @@ function RecoverySignDialog({
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t("rec.signTitle")}</DialogTitle>
           <DialogDescription>{t("rec.signBlurb")}</DialogDescription>
         </DialogHeader>
+        <ScrollArea className="max-h-[calc(85vh-8rem)]">
+        <div className="space-y-3 pr-3">
         <p className="text-sm text-fg">{t("rec.leftSigs", { n: leftSigs })}</p>
         {phase === "pick" ? (
           <div className="space-y-4">
@@ -900,7 +879,7 @@ function RecoverySignDialog({
                 {registerFirst ? <p className="text-xs text-pretty text-fg-muted">{t("rec.ledgerReg")}</p> : null}
                 {transport === "qr" ? (
                   <>
-                    <QrPreview value={current.psbt} label={t("tx.exportQr")} compact />
+                    <QrPreview value={current.psbt} label={t("tx.exportQr")} />
                     <Button type="button" variant="outline" onClick={() => setScan(true)}>{t("rec.importBack")}</Button>
                   </>
                 ) : null}
@@ -950,6 +929,8 @@ function RecoverySignDialog({
           </div>
         )}
         {error ? <p className="text-xs text-pretty text-danger">{error}</p> : null}
+        </div>
+        </ScrollArea>
       </DialogContent>
     </Dialog>
     <Dialog open={scan} onOpenChange={setScan}>
@@ -1434,6 +1415,10 @@ function spendSize(stages: Stage[], reuse: boolean, index = 0): { sigs: number; 
   const slots = describeStageSlots(stages, reuse);
   const slot = slots[index] ?? slots[0];
   return { sigs: Math.max(1, slot?.k ?? 1), keys: Math.max(1, slot?.n ?? 1) };
+}
+
+function noTimelock(open: number[], slots: { lock?: string; delay: number }[]): boolean {
+  return open.some((i) => slots[i] && slots[i].lock !== "after" && slots[i].delay === 0);
 }
 
 function bundleByTag<T extends { id: string; tag: string; pathIndex: number }>(rows: T[], merge: ReadonlySet<string>) {
