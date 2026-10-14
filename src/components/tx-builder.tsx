@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { QrCode, Trash2 } from "lucide-react";
-import { addressFromScan, addedSignaturePubkeys, btcToSats, buildPsbt, estimateVbytes, expandSpots, extractSignedTx, feeFromRate, mergePsbtSignatures, planPayments, samePsbtTransaction, satsFromDecimal, satsToDecimal, type ScriptSpot } from "@/lib/tx/psbt";
+import { addressFromScan, addedSignaturePubkeys, btcToSats, buildPsbt, estimateVbytes, expandSpots, extractSignedTx, feeFromRate, mergePsbtSignatures, planPayments, samePsbtTransaction, satsFromDecimal, satsToDecimal, witnessScriptBytes, type ScriptSpot } from "@/lib/tx/psbt";
 import { signatureReport } from "@/lib/tx/sigs";
 import { type UtxoHit, type WatchAddr } from "@/lib/hw/address-check";
 import { AmountInline } from "@/components/amount";
@@ -196,6 +196,7 @@ function SendPane({
   const suggested = useMemo(() => suggestChange(addresses, avoidSet(selected, rows)), [addresses, selected, rows]);
   const changeValue = changeEdited ? change : (suggested?.address ?? "");
   const size = spendSize(stages, reuse, pathIndex ?? 0);
+  const scriptBytes = compiled?.ok && !isWpkhDescriptor(compiled.descriptor) ? witnessScriptBytes(compiled.miniscript) : 0;
   const entered = rows.filter((r) => r.address.trim());
   const gross = entered.reduce((s, r) => s + rowSats(r), 0);
   const inputSats = selected.reduce((s, c) => s + btcToSats(c.amount), 0);
@@ -204,6 +205,7 @@ function SendPane({
     outputs: [...entered.map((r) => r.address), ...(changeValue ? [changeValue] : [""])],
     sigs: size.sigs,
     keys: size.keys,
+    scriptBytes,
   });
   const feeSats = resolveFee(feeSource, rate, feeAbs, vbytes);
   const canFromChange = inputSats - gross - feeSats >= 546;
@@ -504,6 +506,7 @@ export function RecoveryTab() {
     return { ...bundle, dest: freshReceive(snap?.addresses ?? [], taken)[i] ?? "" };
   });
   const needPaths = [...new Set(rows.map((r) => r.pathIndex))];
+  const scriptBytes = compiled?.ok && !isWpkhDescriptor(compiled.descriptor) ? witnessScriptBytes(compiled.miniscript) : 0;
   const tagged = visible.filter((c) => c.tag.trim());
   const allMerge = tagged.length > 0 && tagged.every((c) => mergeOn.includes(c.id));
 
@@ -525,7 +528,7 @@ export function RecoveryTab() {
         if (!bundle.dest) throw new Error("tx.err.fresh");
         if (bundle.members.some((m) => bundle.dest === m.coin.address)) throw new Error("tx.err.reuse");
         const size = spendSize(stages, reuse, bundle.pathIndex);
-        const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest], sigs: size.sigs, keys: size.keys });
+        const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest], sigs: size.sigs, keys: size.keys, scriptBytes });
         const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
         const total = bundle.members.reduce((sum, m) => sum + btcToSats(m.coin.amount), 0);
         const locks = pathLock(stages, bundle.pathIndex);
@@ -636,7 +639,7 @@ export function RecoveryTab() {
   for (const bundle of bundles) {
     if (!readyIds.has(bundle.id)) continue;
     const size = spendSize(stages, reuse, bundle.pathIndex);
-    const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest || ""], sigs: size.sigs, keys: size.keys });
+    const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest || ""], sigs: size.sigs, keys: size.keys, scriptBytes });
     const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
     const total = bundle.members.reduce((sum, m) => sum + btcToSats(m.coin.amount), 0);
     readyOut += Math.max(0, total - feeSats);
@@ -741,7 +744,7 @@ export function RecoveryTab() {
       </section>
       <FeePair
         id="tx-rec-fee"
-        vbytes={sample ? estimateVbytes({ inputs: sample.members.length, outputs: [sample.dest || ""], sigs: sampleSize.sigs, keys: sampleSize.keys }) : 0}
+        vbytes={sample ? estimateVbytes({ inputs: sample.members.length, outputs: [sample.dest || ""], sigs: sampleSize.sigs, keys: sampleSize.keys, scriptBytes }) : 0}
         rate={rate}
         abs={feeAbs}
         source={feeSource}
@@ -753,7 +756,7 @@ export function RecoveryTab() {
         {bundles.map((bundle) => {
           const psbt = built.find((b) => b.id === bundle.id)?.psbt ?? "";
           const size = spendSize(stages, reuse, bundle.pathIndex);
-          const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest || ""], sigs: size.sigs, keys: size.keys });
+          const vb = estimateVbytes({ inputs: bundle.members.length, outputs: [bundle.dest || ""], sigs: size.sigs, keys: size.keys, scriptBytes });
           const feeSats = resolveFee(feeSource, rate, feeAbs, vb);
           const total = bundle.members.reduce((sum, m) => sum + btcToSats(m.coin.amount), 0);
           const outSats = Math.max(0, total - feeSats);
