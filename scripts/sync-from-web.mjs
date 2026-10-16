@@ -579,10 +579,25 @@ function readJson(path) {
  * Re-resolve only what changed (`--package-lock-only` keeps existing pins) and fail loudly
  * if the lock still disagrees. SYNC_LOCK=0 turns the re-resolve off (check only).
  */
+function npmCiRejects() {
+  // `npm ci --dry-run` applies the same lock/package.json validation as the real install,
+  // including `overrides`, which the root-entry comparison above cannot see.
+  try {
+    execFileSync("npm", ["ci", "--dry-run", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: root, stdio: "pipe" });
+    return "";
+  } catch (e) {
+    return String(e.stderr || e.message).split("\n").filter((l) => /Invalid|Missing|error/.test(l)).join("\n  ") || "npm ci rejected the lock";
+  }
+}
+
 function syncLockfile() {
   const pkgPath = join(root, "package.json");
   const lockPath = join(root, "package-lock.json");
   let diff = existsSync(lockPath) ? lockMismatches(readJson(pkgPath), readJson(lockPath)) : ["package-lock.json missing"];
+  if (!diff.length) {
+    const rejected = npmCiRejects();
+    if (rejected) diff = [rejected];
+  }
   if (!diff.length) return;
   console.log(`[sync] package-lock.json out of date:\n  ${diff.join("\n  ")}`);
   if (process.env.SYNC_LOCK === "0") {
@@ -594,6 +609,8 @@ function syncLockfile() {
     stdio: "inherit",
   });
   diff = lockMismatches(readJson(pkgPath), readJson(lockPath));
+  const rejected = diff.length ? "" : npmCiRejects();
+  if (rejected) diff = [rejected];
   if (diff.length) {
     throw new Error(`[sync] package-lock.json still differs from package.json:\n  ${diff.join("\n  ")}`);
   }
