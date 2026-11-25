@@ -54,6 +54,13 @@ Output: `artifacts/release/Scriptwerk-<versionName>-code<versionCode>.apk`.
 
 CI: `.github/workflows/release-apk.yml` runs after **Sync from web**. When the version has no release yet it builds and signs the APK, creates a GitHub release and publishes it to Zapstore with [zsp](https://github.com/zapstore/zsp) (`zapstore.yaml`). Repo secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `ZAPSTORE_SIGN_WITH`, `ZSP_BUNKER_CLIENT_KEY` (64-hex NIP-46 client key, `openssl rand -hex 32`, needed when `ZAPSTORE_SIGN_WITH` is a `bunker://` URL so every CI run reuses the client Amber approved).
 
+Signed App Bundle for Play (not installable, not published to Zapstore). Same keystore. The artifact is on the Actions run for 14 days. `-f attach=true` adds it to the GitHub release that already has this version's APK:
+
+```bash
+gh workflow run "Release AAB" --repo kwadde-cmyk/scriptwerk-android
+gh workflow run "Release AAB" --repo kwadde-cmyk/scriptwerk-android -f attach=true
+```
+
 ## Upstream
 
 Policy compiler, BIP-388, Bitcoin Core / Electrum: [kwadde-cmyk/scriptwerk-startos](https://github.com/kwadde-cmyk/scriptwerk-startos).

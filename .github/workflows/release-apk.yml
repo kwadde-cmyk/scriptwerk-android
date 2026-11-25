@@ -28,7 +28,7 @@ permissions:
 
 env:
   ZSP_VERSION: "0.4.17"
-  BUILD_TOOLS: "34.0.0"
+  BUILD_TOOLS: "36.0.0"
 
 jobs:
   release:

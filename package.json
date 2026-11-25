@@ -29,6 +29,7 @@
     "format": "prettier --write .",
     "build:apk-web": "node scripts/with-app-env.mjs npx vite build --config vite.apk.config.ts",
     "build:apk": "node scripts/build-apk.mjs",
+    "build:aab": "node scripts/build-apk.mjs --bundle",
     "sync:web": "node scripts/sync-from-web.mjs"
   },
   "dependencies": {

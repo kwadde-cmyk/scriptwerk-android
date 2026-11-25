@@ -8,6 +8,9 @@
  *   -> artifacts/release/Scriptwerk-<versionName>-code<versionCode>.apk,
  *      signed via android/app/build.gradle (ANDROID_KEYSTORE_FILE + passwords,
  *      or keystore.properties). Fails if the result is unsigned.
+ * App bundle:       npm run build:aab
+ *   -> artifacts/release/Scriptwerk-<versionName>-code<versionCode>.aab,
+ *      same signing. Not installable; this is the Play upload.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -50,7 +53,8 @@ function latestBuildTools(home) {
   return join(dir, versions[0] || "36.0.0");
 }
 const buildTools = latestBuildTools(androidHome);
-const release = process.argv.includes("--release") || process.env.APK_RELEASE === "1";
+const bundle = process.argv.includes("--bundle");
+const release = bundle || process.argv.includes("--release") || process.env.APK_RELEASE === "1";
 const outApk = join(root, "artifacts", "Scriptwerk.apk");
 
 function env() {
@@ -242,7 +246,7 @@ UTXOs kommen **nicht** von mempool.space. Im Node-Dialog **Fulcrum oder Electrs*
 
 const publicApk = join(root, "public", "Scriptwerk.apk");
 if (existsSync(publicApk)) rmSync(publicApk);
-console.log(`[apk] mode ${release ? "release" : "debug"}`);
+console.log(`[apk] mode ${bundle ? "bundle" : release ? "release" : "debug"}`);
 
 run("npx", ["vite", "build", "--config", "vite.apk.config.ts"]);
 
@@ -272,6 +276,35 @@ writeAndroidReadme();
 writeFileSync(join(root, "android/local.properties"), `sdk.dir=${androidHome}\n`);
 
 const gradle = join(root, "android/gradlew");
+
+if (bundle) {
+  run(gradle, ["bundleRelease", "--no-daemon"], { cwd: join(root, "android") });
+  const outDir = join(root, "android/app/build/outputs/bundle/release");
+  const signed = join(outDir, "app-release.aab");
+  if (!existsSync(signed)) {
+    const unsigned = existsSync(join(outDir, "app-release-unsigned.aab"));
+    console.error(
+      unsigned
+        ? "[aab] bundle is unsigned — set ANDROID_KEYSTORE_FILE + ANDROID_KEYSTORE_PASSWORD (+ ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD) or keystore.properties"
+        : "[aab] gradle finished but app-release.aab is missing",
+    );
+    process.exit(1);
+  }
+  const { code, name } = gradleVersion();
+  const relDir = join(root, "artifacts", "release");
+  mkdirSync(relDir, { recursive: true });
+  const relAab = join(relDir, `Scriptwerk-${name}-code${code}.aab`);
+  copyFileSync(signed, relAab);
+  const jarsigner = join(javaHome, "bin", "jarsigner");
+  if (existsSync(jarsigner)) {
+    run(jarsigner, ["-verify", "-certs", relAab]);
+  } else {
+    console.warn("[aab] jarsigner missing, skip signature check");
+  }
+  const mb = (statSync(relAab).size / (1024 * 1024)).toFixed(1);
+  console.log(`[aab] wrote ${relAab} (${mb} MB)`);
+  process.exit(0);
+}
 
 if (release) {
   run(gradle, ["assembleRelease", "--no-daemon"], { cwd: join(root, "android") });
