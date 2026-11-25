@@ -24,9 +24,32 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const javaHome = process.env.JAVA_HOME || "/usr/lib/jvm/java-17-openjdk-amd64";
+function defaultJavaHome() {
+  if (process.env.JAVA_HOME) return process.env.JAVA_HOME;
+  for (const p of ["/usr/lib/jvm/java-21-openjdk-amd64", "/usr/lib/jvm/java-17-openjdk-amd64"]) {
+    if (existsSync(p)) return p;
+  }
+  return "/usr/lib/jvm/java-17-openjdk-amd64";
+}
+const javaHome = defaultJavaHome();
 const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || "/tmp/android-sdk";
-const buildTools = join(androidHome, "build-tools/34.0.0");
+function latestBuildTools(home) {
+  const dir = join(home, "build-tools");
+  if (!existsSync(dir)) return join(dir, "36.0.0");
+  const versions = readdirSync(dir)
+    .filter((n) => existsSync(join(dir, n, "apksigner")))
+    .sort((a, b) => {
+      const pa = a.split(".").map(Number);
+      const pb = b.split(".").map(Number);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pb[i] || 0) - (pa[i] || 0);
+        if (d) return d;
+      }
+      return 0;
+    });
+  return join(dir, versions[0] || "36.0.0");
+}
+const buildTools = latestBuildTools(androidHome);
 const release = process.argv.includes("--release") || process.env.APK_RELEASE === "1";
 const outApk = join(root, "artifacts", "Scriptwerk.apk");
 

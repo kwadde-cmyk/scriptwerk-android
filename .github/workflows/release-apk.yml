@@ -108,13 +108,13 @@ jobs:
         if: steps.ver.outputs.build == 'true'
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
           cache: gradle
 
       - uses: android-actions/setup-android@v4
         if: steps.ver.outputs.build == 'true'
         with:
-          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
 
       - name: Decode keystore
         if: steps.ver.outputs.build == 'true'

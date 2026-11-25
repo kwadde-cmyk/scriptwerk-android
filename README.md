@@ -42,7 +42,7 @@ npm install
 npm run build:apk
 ```
 
-Output: `artifacts/Scriptwerk.apk`. Needs JDK 17 and Android SDK 34.
+Output: `artifacts/Scriptwerk.apk`. Needs JDK 21 and Android SDK 36.
 
 Signed release build (needs the release keystore via `keystore.properties` or `ANDROID_KEYSTORE_FILE` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`):
 
