@@ -331,6 +331,29 @@ import { installNativeUsbPolyfill } from "./native-usb.ts";`,
   return out;
 }
 
+function patchRoot(src) {
+  let out = src;
+  if (!out.includes('from "@/components/native-safe-area"')) {
+    out = insertOnce(
+      out,
+      "native-safe-area",
+      `import { StudioShell } from "@/components/studio-shell";`,
+      `import { StudioShell } from "@/components/studio-shell";
+import { NativeSafeArea } from "@/components/native-safe-area";`,
+    );
+  }
+  if (!out.includes("<NativeSafeArea />")) {
+    out = insertOnce(
+      out,
+      "<NativeSafeArea />",
+      `<PreviewHostBridge />`,
+      `<NativeSafeArea />
+        <PreviewHostBridge />`,
+    );
+  }
+  return out;
+}
+
 function patchLedgerTimeout(src) {
   if (src.includes("openLedgerSessionInner")) {
     return src.replace(/withTimeout\(openLedgerSessionInner\(\),\s*\d+\)/, "withTimeout(openLedgerSessionInner(), 45000)");
@@ -718,6 +741,8 @@ try {
   if (existsSync(store)) writeFileSync(store, patchStore(readFileSync(store, "utf8")));
   const i18n = join(root, "src/lib/i18n.ts");
   if (existsSync(i18n)) writeFileSync(i18n, patchI18n(readFileSync(i18n, "utf8")));
+  const rootTsx = join(root, "src/routes/__root.tsx");
+  if (existsSync(rootTsx)) writeFileSync(rootTsx, patchRoot(readFileSync(rootTsx, "utf8")));
 
   const webPkg = JSON.parse(readFileSync(join(tmp, "package.json"), "utf8"));
   const androidPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -762,7 +787,17 @@ try {
   ]);
   assertContains(diag, ["nativeRpcAvailable"]);
   assertContains(i18n, i18nNeedles());
-  for (const rel of ["src/lib/hw/usb-util.ts", "src/lib/hw/usb-polyfill.ts", "src/lib/bitcoind/native-http.ts"]) {
+  assertContains(join(root, "src/routes/__root.tsx"), [
+    'from "@/components/native-safe-area"',
+    "<NativeSafeArea />",
+  ]);
+  for (const rel of [
+    "src/lib/hw/usb-util.ts",
+    "src/lib/hw/usb-polyfill.ts",
+    "src/lib/bitcoind/native-http.ts",
+    "src/lib/native-safe-area.ts",
+    "src/components/native-safe-area.tsx",
+  ]) {
     if (!existsSync(join(root, rel))) throw new Error(`[sync] overlay missing after restore: ${rel}`);
   }
 

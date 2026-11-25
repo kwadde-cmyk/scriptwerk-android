@@ -3,6 +3,7 @@ import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { StudioShell } from "@/components/studio-shell";
+import { NativeSafeArea } from "@/components/native-safe-area";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Scriptwerk";
@@ -32,6 +33,7 @@ export const Route = createRootRoute({
         <HeadContent />
       </head>
       <body className="h-full w-full overflow-x-hidden">
+        <NativeSafeArea />
         <PreviewHostBridge />
         <AuthProvider>
           <StudioShell />
